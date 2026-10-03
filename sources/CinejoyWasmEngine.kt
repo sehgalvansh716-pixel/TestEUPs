@@ -169,7 +169,7 @@ object CinejoyWasmEngine {
 
             val decryptedBytes = cipher.doFinal(ciphertextWithTag)
             String(decryptedBytes, Charsets.UTF_8)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
