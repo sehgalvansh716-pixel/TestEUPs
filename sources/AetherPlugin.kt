@@ -720,6 +720,27 @@ class AetherPlugin(
         return audioBadge to subsList
     }
 
+    @Volatile private var cachedChunkPath: Pair<Long, String>? = null
+
+    private fun discoverSigningChunkPath(): String? {
+        val c = cachedChunkPath
+        if (c != null && System.currentTimeMillis() - c.first < 10 * 60_000L) return c.second
+        return try {
+            val ua = defaultHeaders["User-Agent"]!!
+            val html = client.newCall(Request.Builder().url("https://atlantic.st/").header("User-Agent", ua).build())
+                .execute().use { if (it.isSuccessful) it.body?.string() else null } ?: return null
+            val direct = Regex("""/assets/chunk-[A-Za-z0-9_-]+\.js""").find(html)?.value
+            val found = direct ?: run {
+                val idx = Regex("""/assets/index-[A-Za-z0-9_-]+\.js""").find(html)?.value ?: return null
+                val js = client.newCall(Request.Builder().url("https://atlantic.st$idx").header("User-Agent", ua).build())
+                    .execute().use { if (it.isSuccessful) it.body?.string() else null } ?: return null
+                Regex("""chunk-[A-Za-z0-9_-]+\.js""").find(js)?.value?.let { "/assets/$it" }
+            }
+            if (found != null) cachedChunkPath = System.currentTimeMillis() to found
+            found
+        } catch (_: Exception) { null }
+    }
+
     private suspend fun fetchAphroditeStreams(
         tmdbId: String,
         isTv: Boolean,
@@ -739,26 +760,40 @@ class AetherPlugin(
 
         var streamUrl: String? = null
         try {
-            val req = Request.Builder()
-                .url("https://cdn.hls.lol$path")
-                .header("Referer", "https://atlantic.st/")
-                .header("Origin", "https://atlantic.st")
-                .header("User-Agent", defaultHeaders["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-                .header("Accept", "application/json, text/plain, */*")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string()
-                    if (!body.isNullOrBlank()) {
-                        val root = json.parseToJsonElement(body).jsonObject
-                        if (root["found"]?.jsonPrimitive?.booleanOrNull != false) {
-                            streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
-                                ?: root["hls"]?.jsonPrimitive?.contentOrNull
-                        }
-                    }
+            val chunk = discoverSigningChunkPath()
+            val raw = if (chunk != null) AtlanticWebSigner.fetchContent(chunk, path) else null
+            raw?.let {
+                val root = json.parseToJsonElement(it).jsonObject
+                if (root["found"]?.jsonPrimitive?.booleanOrNull != false) {
+                    streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
+                        ?: root["hls"]?.jsonPrimitive?.contentOrNull
                 }
             }
         } catch (_: Throwable) {}
+
+        if (streamUrl.isNullOrBlank()) {
+            try {
+                val req = Request.Builder()
+                    .url("https://cdn.hls.lol$path")
+                    .header("Referer", "https://atlantic.st/")
+                    .header("Origin", "https://atlantic.st")
+                    .header("User-Agent", defaultHeaders["User-Agent"] ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                    .header("Accept", "application/json, text/plain, */*")
+                    .build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            val root = json.parseToJsonElement(body).jsonObject
+                            if (root["found"]?.jsonPrimitive?.booleanOrNull != false) {
+                                streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
+                                    ?: root["hls"]?.jsonPrimitive?.contentOrNull
+                            }
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
 
         val resolvedUrl = streamUrl?.takeIf { it.startsWith("http") }
         val isHoneypot = resolvedUrl != null && isHoneypotStream(resolvedUrl)
@@ -818,35 +853,67 @@ class AetherPlugin(
                 val masterDecrypted = decryptHeliosUrl(encUrl) ?: return@withContext emptyList()
                 if (!masterDecrypted.startsWith("http")) return@withContext emptyList()
 
-                val separator = if (masterDecrypted.contains("?")) "&" else "?"
-                val aphroditeMasterUrl = "$masterDecrypted${separator}server=aphrodite"
+                val qParam = masterDecrypted.substringAfter("?q=", "").substringBefore("&")
+                if (qParam.isNotBlank()) {
+                    try {
+                        val decodedBytes = try {
+                            java.util.Base64.getUrlDecoder().decode(qParam)
+                        } catch (_: Exception) {
+                            val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                            java.util.Base64.getDecoder().decode(padded)
+                        }
+                        val qRoot = json.parseToJsonElement(String(decodedBytes, Charsets.UTF_8)).jsonObject
+                        val customHeadersObj = qRoot["h"]?.jsonObject
+                        val streamHeaders = mutableMapOf<String, String>()
+                        customHeadersObj?.forEach { (k, v) ->
+                            v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                        }
+                        val aphroditeReqHeaders = mapOf(
+                            "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                            "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                            "User-Agent" to defaultHeaders["User-Agent"]!!,
+                            "Accept-Ranges" to "bytes"
+                        )
 
-                results.add(
-                    StreamSource(
-                        url = aphroditeMasterUrl,
-                        serverName = "Aphrodite",
-                        resolutionLabel = "Auto",
-                        quality = "Aether Aphrodite CDN (Auto HLS)",
-                        isM3u8 = true,
-                        releaseType = AudioReleaseType.ORIGINAL,
-                        headers = defaultHeaders
-                    )
-                )
+                        val variantsArr = qRoot["v"]?.jsonArray
+                        if (variantsArr != null) {
+                            for (vElem in variantsArr) {
+                                val vObj = vElem.jsonObject
+                                val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                val qualityLabel = when {
+                                    vQuality.contains("1080") -> "1080p FHD"
+                                    vQuality.contains("720") -> "720p HD"
+                                    vQuality.contains("480") -> "480p SD"
+                                    else -> vQuality
+                                }
+                                results.add(
+                                    StreamSource(
+                                        url = vUrl,
+                                        serverName = "Aphrodite ($qualityLabel)",
+                                        resolutionLabel = qualityLabel,
+                                        quality = "Aether Aphrodite ($qualityLabel HLS)",
+                                        isM3u8 = true,
+                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        headers = aphroditeReqHeaders
+                                    )
+                                )
+                            }
+                        }
 
-                try {
-                    val variants = resolveMasterPlaylistVariants(masterDecrypted, "Aether Aphrodite", defaultHeaders)
-                    variants.forEach { v ->
-                        val vSep = if (v.url.contains("?")) "&" else "?"
-                        val vUrl = "${v.url}${vSep}server=aphrodite"
                         results.add(
-                            v.copy(
-                                url = vUrl,
-                                serverName = "Aphrodite",
-                                quality = v.quality
+                            StreamSource(
+                                url = masterDecrypted,
+                                serverName = "Aphrodite (Auto)",
+                                resolutionLabel = "Auto",
+                                quality = "Aether Aphrodite (Auto HLS)",
+                                isM3u8 = true,
+                                releaseType = AudioReleaseType.ORIGINAL,
+                                headers = aphroditeReqHeaders
                             )
                         )
-                    }
-                } catch (_: Exception) {}
+                    } catch (_: Exception) {}
+                }
             }
         } catch (_: Exception) {}
         results
@@ -1080,6 +1147,17 @@ class AetherPlugin(
                                                     size = sizeEstimate,
                                                     url = vUrl,
                                                     source = "Aether Helios CDN",
+                                                    provider = name,
+                                                    headers = reqHeaders
+                                                )
+                                            )
+                                            options.add(
+                                                DownloadOption(
+                                                    title = "$qLabel - Aether Aphrodite",
+                                                    quality = qLabel,
+                                                    size = sizeEstimate,
+                                                    url = vUrl,
+                                                    source = "Aether Aphrodite CDN",
                                                     provider = name,
                                                     headers = reqHeaders
                                                 )
