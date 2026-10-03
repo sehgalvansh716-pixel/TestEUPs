@@ -1,0 +1,87 @@
+{
+  "name": "TestEUPs Official Testing Repository",
+  "description": "Decoupled EUP plugin test repository for Euthopiar",
+  "manifestVersion": 1,
+  "plugins": [
+    {
+      "id": "cinejoy",
+      "name": "Cinejoy",
+      "version": 1,
+      "versionName": "1.0.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://cinejoy.pk",
+      "description": "High-speed 1080p/4K streaming with automated Wasm request sealing (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.CinejoyPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "9480f0d638e1d032ce6340fa4a360867526414877f4f291e3193e5612bba8fdb",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "aether",
+      "name": "Aether",
+      "version": 1,
+      "versionName": "1.0.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://aether.ist",
+      "description": "Curated multi-provider streaming ecosystem with Helios/Aphrodite mirrors and subtitles (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.AetherPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "beb0b747eab4ff559a67089c982e2d3ac40cf9205e5f42e396c07125ab46f62d",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "1shows",
+      "name": "1Shows",
+      "version": 1,
+      "versionName": "1.0.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://www.1shows.bz",
+      "description": "Direct 4K Remux / 1080p high-speed downloads & streams via MakimaDL wasm engine (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.OneShowsPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "6bd8d3d9d97052bf99a1d532df78f1b15905daee944db48f97b7b8342fe035a1",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "4khdhub",
+      "name": "4KHDHub",
+      "version": 1,
+      "versionName": "1.0.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://4khdhub.one",
+      "description": "High quality 4K UHD, HDR, REMUX, and multi-language streaming with Cloudflare R2 direct servers (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.FourKHDHubPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "d0dc79f9d8836a6d94529e558d6c804c6ad29dce773ec90c8dad18e06d188607",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    }
+  ]
+}
