@@ -1,7 +1,5 @@
 package com.euthopiar.core.provider
 
-import com.euthopiar.core.dsl.*
-import com.euthopiar.core.extractor.ExtractorRegistry
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
 import com.euthopiar.core.util.TmdbBridge
@@ -11,48 +9,36 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.*
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URI
 import java.net.URLEncoder
-import java.security.SecureRandom
-import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
-import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
  * Official Native Aether Streaming Provider Plugin (https://aether.ist/).
  *
- * Completely reverse-engineered from Aether's production infrastructure, Vite bundles,
- * and distributed CDN edges:
- * - Curated Aether Movie-Web catalog feeds via TMDB API
- * - Fast multi-search across movies & TV series with retry resiliency
- * - Complete metadata, cast, seasons, real episode titles, and 16:9 still thumbnails
- * - Clear logo resolution via TMDB images API & Metahub fallback
- * - Multi-Server Native Stream Extraction:
- *     1. Aphrodite: Native Aether edge CDN (cdn.hls.lol) with HMAC-SHA256 handshake & AES-128-GCM session derivation
- *     2. Meridian: Native Aether backend (meridian.aether.cx) serving Neuronix CDN HLS with self-origin playback
- *     3. Lul: Native Aether backend (lul.aether.cx) with Cloudflare Worker HLS master playlists
- *     4. Helios: Decrypted stream engine (stream.hls.lol) featuring Moscow, Novo, and Omsk HLS mirrors
- * - Multi-Audio & Quality Detection:
- *     - Inspects manifests for multi-audio tracks (EN/ES/HI/FR/RU) and quality tiers (1080p, 720p, 480p, Auto)
+ * Fully integrated with TMDB Metadata & Clear Logos, AniSkip, and OpenSubtitles bridges:
+ * - Curated Aether / TMDB catalog feeds and global multi-search
+ * - High-resolution 16:9 backdrops, 2:3 posters, and transparent PNG logos
+ * - Full cast with character roles and headshot pictures, directors, and recommendations
+ * - TV season and episode breakdown with 16:9 stills, canonical titles, synopses, and durations
+ * - Multi-Server Live Streaming Engine:
+ *     1. Helios: Direct 1080p FHD, 720p HD, and 480p SD streams extracted from AES-GCM payload with authentic headers
+ *     2. Aphrodite: High-speed edge CDN (cdn.hls.lol) with Atlantic origin playback
+ *     3. Meridian: High-speed 1080p HLS stream (meridian.aether.cx) with Neuronix CDN playback
+ *     4. Lul: Multi-audio HLS master playlist (lul.aether.cx) with Cloudflare Worker edge playback
  * - Multilingual Subtitle Engine:
- *     - Granite (sub.vdrk.site) 60+ languages
- *     - Natsuki (natsuki.hls.lol) 250+ languages
- *     - OpenSubtitles REST API (rest.opensubtitles.org)
- *     - Meridian embedded subtitle tracks
- * - Direct download link extraction with exact authenticated playback headers
+ *     - Granite API (sub.vdrk.site) 60+ languages
+ *     - Natsuki API (natsuki.hls.lol) 250+ languages
+ *     - Embedded & manifest subtitles
+ * - High-Speed Direct Downloads with exact authenticated headers for all quality tiers (1080p, 720p, 480p)
  */
 class AetherPlugin(
     private val client: OkHttpClient = DohDns.createOkHttpClient(
@@ -65,7 +51,7 @@ class AetherPlugin(
     override val mainUrl: String = "https://aether.ist"
     override val supportedTypes: Set<MediaType> = setOf(MediaType.MOVIE, MediaType.TV_SERIES)
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     private val tmdbApiKey = "1865f43a0549ca50d341dd9ab8b29f49"
 
@@ -77,8 +63,6 @@ class AetherPlugin(
     )
 
     private val heliosKeyHex = "117c358bcfcaf8fe2cfca57c9d2238a300e1c4de2efb83a5012ba84d8a31f1dd"
-    private val aphroditeMasterKey = hexToBytes("40a740fd28a8762ae65afc9781b4077c42b10438af61bf59599c60d7777fe603")
-    private val secureRandom = SecureRandom()
 
     private val logoCache = ConcurrentHashMap<String, String>()
 
@@ -91,20 +75,6 @@ class AetherPlugin(
             i += 2
         }
         return data
-    }
-
-    private fun bytesToHex(bytes: ByteArray): String {
-        val sb = StringBuilder(bytes.size * 2)
-        for (b in bytes) {
-            sb.append(String.format("%02x", b))
-        }
-        return sb.toString()
-    }
-
-    private fun hmacSha256(key: ByteArray, data: String): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(key, "HmacSHA256"))
-        return mac.doFinal(data.toByteArray(Charsets.UTF_8))
     }
 
     private fun newRequestBuilder(url: String, customHeaders: Map<String, String>? = null): Request.Builder {
@@ -195,7 +165,7 @@ class AetherPlugin(
                                 backdropUrl = backdropUrl,
                                 type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
                                 year = year,
-                                rating = vote?.let { String.format("%.1f", it) },
+                                rating = vote?.let { String.format(java.util.Locale.US, "%.1f", it) },
                                 quality = "1080p",
                                 provider = name
                             )
@@ -263,7 +233,7 @@ class AetherPlugin(
                                             backdropUrl = backdropUrl,
                                             type = type,
                                             year = year,
-                                            rating = vote?.let { String.format("%.1f", it) },
+                                            rating = vote?.let { String.format(java.util.Locale.US, "%.1f", it) },
                                             quality = "1080p",
                                             provider = name
                                         )
@@ -282,10 +252,12 @@ class AetherPlugin(
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val isTv = mediaItem.type == MediaType.TV_SERIES
-        val tmdbId = mediaItem.id
+        val rawId = mediaItem.id.ifBlank { mediaItem.url }
+        val tmdbId = Regex("""\b(\d+)\b""").find(rawId)?.value ?: rawId
+
         val enriched = TmdbBridge.fetchEnrichedDetails(client, tmdbId, isTv, mediaItem.title, tmdbApiKey)
 
-        val title = enriched?.title ?: mediaItem.title
+        val title = enriched?.title?.ifBlank { mediaItem.title } ?: mediaItem.title
         val posterUrl = enriched?.posterUrl ?: mediaItem.posterUrl
         val backdropUrl = enriched?.backdropUrl ?: mediaItem.backdropUrl
         val year = enriched?.year ?: mediaItem.year
@@ -403,7 +375,7 @@ class AetherPlugin(
         val emittedSubUrls = ConcurrentHashMap.newKeySet<String>()
         val emittedSubLangs = ConcurrentHashMap.newKeySet<String>()
 
-        // Subtitle Job
+        // 0. Subtitle Job (Granite & Natsuki)
         launch {
             // Granite API (vdrk.site)
             try {
@@ -478,48 +450,94 @@ class AetherPlugin(
             }
         }
 
-        // 1. Link Engine
+        // 1. Helios Multi-Quality Engine (Fastest, High Throughput, 1080p / 720p / 480p)
         launch {
             try {
-                val linkUrl = if (isTv && season != null && episode != null) {
-                    "https://link.aether.cx/tv/$tmdbId/$season/$episode"
+                val heliosUrl = if (isTv && season != null && episode != null) {
+                    "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
                 } else {
-                    "https://link.aether.cx/movie/$tmdbId"
+                    "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=movie"
                 }
-                val req = Request.Builder()
-                    .url(linkUrl)
-                    .header("User-Agent", defaultHeaders["User-Agent"]!!)
-                    .header("Referer", "https://aether.ist/")
-                    .header("Origin", "https://aether.ist")
-                    .build()
+
+                val req = newRequestBuilder(heliosUrl).build()
                 client.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val body = resp.body?.string() ?: ""
                         val root = json.parseToJsonElement(body).jsonObject
-                        val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
-                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
-                            val linkHeaders = mapOf(
-                                "Referer" to "https://nextgencloudfabric.com/",
-                                "Origin" to "https://nextgencloudfabric.com",
-                                "User-Agent" to defaultHeaders["User-Agent"]!!,
-                                "Accept-Ranges" to "bytes"
-                            )
-                            val variants = this@AetherPlugin.fetchLinkVariants(streamUrl, linkHeaders)
-                            if (variants.isNotEmpty()) {
-                                variants.forEach { v ->
-                                    if (emittedStreamUrls.add(v.url)) send(StreamEmission.SourceFound(v))
+                        val sources = root["sources"]?.jsonObject
+                        if (sources != null) {
+                            for ((serverName, serverVal) in sources) {
+                                val sObj = serverVal.jsonObject
+                                val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                                val decryptedUrl = decryptHeliosUrl(encUrl) ?: continue
+                                if (!decryptedUrl.startsWith("http")) continue
+
+                                // 1. Parse individual direct quality variants from "q" query parameter
+                                val qParam = decryptedUrl.substringAfter("?q=", "").substringBefore("&")
+                                if (qParam.isNotBlank()) {
+                                    try {
+                                        val decodedBytes = try {
+                                            java.util.Base64.getUrlDecoder().decode(qParam)
+                                        } catch (_: Exception) {
+                                            val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                                            java.util.Base64.getDecoder().decode(padded)
+                                        }
+                                        val decodedJsonStr = String(decodedBytes, Charsets.UTF_8)
+                                        val qRoot = json.parseToJsonElement(decodedJsonStr).jsonObject
+                                        val customHeadersObj = qRoot["h"]?.jsonObject
+                                        val streamHeaders = mutableMapOf<String, String>()
+                                        customHeadersObj?.forEach { (k, v) ->
+                                            v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                                        }
+                                        val reqHeaders = mapOf(
+                                            "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                                            "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                                            "User-Agent" to defaultHeaders["User-Agent"]!!
+                                        )
+
+                                        val variantsArr = qRoot["v"]?.jsonArray
+                                        if (variantsArr != null) {
+                                            for (vElem in variantsArr) {
+                                                val vObj = vElem.jsonObject
+                                                val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                                val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                                val qualityLabel = when {
+                                                    vQuality.contains("1080") -> "1080p FHD"
+                                                    vQuality.contains("720") -> "720p HD"
+                                                    vQuality.contains("480") -> "480p SD"
+                                                    else -> vQuality
+                                                }
+                                                val src = StreamSource(
+                                                    url = vUrl,
+                                                    serverName = "Helios ($qualityLabel)",
+                                                    resolutionLabel = qualityLabel,
+                                                    quality = "Aether Helios ($qualityLabel HLS)",
+                                                    isM3u8 = true,
+                                                    releaseType = AudioReleaseType.ORIGINAL,
+                                                    headers = reqHeaders
+                                                )
+                                                if (emittedStreamUrls.add(src.url)) send(StreamEmission.SourceFound(src))
+                                            }
+                                        }
+                                    } catch (_: Exception) {}
                                 }
-                            } else {
-                                val src = StreamSource(
-                                    url = streamUrl,
-                                    serverName = "Aether Link",
+
+                                // 2. Also emit Master playlist
+                                val heliosMasterHeaders = mapOf(
+                                    "Referer" to "https://stream.hls.lol/",
+                                    "Origin" to "https://stream.hls.lol",
+                                    "User-Agent" to defaultHeaders["User-Agent"]!!
+                                )
+                                val masterSrc = StreamSource(
+                                    url = decryptedUrl,
+                                    serverName = "Helios ($serverName Auto)",
                                     resolutionLabel = "Auto",
-                                    quality = "Aether Link (Auto HLS)",
+                                    quality = "Aether Helios ($serverName Auto HLS)",
                                     isM3u8 = true,
                                     releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = linkHeaders
+                                    headers = heliosMasterHeaders
                                 )
-                                if (emittedStreamUrls.add(src.url)) send(StreamEmission.SourceFound(src))
+                                if (emittedStreamUrls.add(masterSrc.url)) send(StreamEmission.SourceFound(masterSrc))
                             }
                         }
                     }
@@ -527,7 +545,19 @@ class AetherPlugin(
             } catch (_: Exception) {}
         }
 
-        // 2. Meridian Engine
+        // 2. Aphrodite CDN (High-speed multi-edge)
+        launch {
+            try {
+                val aphroditeStreams = fetchAphroditeStreams(tmdbId, isTv, season, episode)
+                aphroditeStreams.forEach { aphroditeSource ->
+                    if (emittedStreamUrls.add(aphroditeSource.url)) {
+                        send(StreamEmission.SourceFound(aphroditeSource))
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 3. Meridian Engine
         launch {
             try {
                 val meridianUrl = if (isTv && season != null && episode != null) {
@@ -549,12 +579,11 @@ class AetherPlugin(
                                 "User-Agent" to defaultHeaders["User-Agent"]!!,
                                 "Accept-Ranges" to "bytes"
                             )
-                            val hlsUrl = if (streamUrl.contains(".m3u8")) streamUrl else "$streamUrl&output=.m3u8"
                             val src = StreamSource(
-                                url = hlsUrl,
-                                serverName = "Aether Meridian",
-                                resolutionLabel = "1080p",
-                                quality = "Aether Meridian (Auto/1080p HLS)",
+                                url = streamUrl,
+                                serverName = "Meridian (1080p)",
+                                resolutionLabel = "1080p FHD",
+                                quality = "Aether Meridian (1080p FHD HLS)",
                                 isM3u8 = true,
                                 releaseType = AudioReleaseType.ORIGINAL,
                                 headers = playbackHeaders
@@ -577,64 +606,7 @@ class AetherPlugin(
             } catch (_: Exception) {}
         }
 
-        // 3. Helios Mirrors
-        launch {
-            try {
-                val heliosUrl = if (isTv && season != null && episode != null) {
-                    "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
-                } else {
-                    "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=movie"
-                }
-
-                val req = newRequestBuilder(heliosUrl).build()
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string() ?: ""
-                        val root = json.parseToJsonElement(body).jsonObject
-                        val sources = root["sources"]?.jsonObject
-                        if (sources != null) {
-                            for ((serverName, serverVal) in sources) {
-                                val sObj = serverVal.jsonObject
-                                val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                                val decryptedUrl = decryptHeliosUrl(encUrl)
-                                if (decryptedUrl != null && decryptedUrl.startsWith("http")) {
-                                    val badge = when (serverName.lowercase()) {
-                                        "moscow" -> "Aether Moscow (Auto/1080p HLS)"
-                                        "novo" -> "Aether Novo (Auto/1080p HLS)"
-                                        "omsk" -> "Aether Omsk (Auto/1080p HLS)"
-                                        else -> "Aether $serverName (1080p HLS)"
-                                    }
-                                    val src = StreamSource(
-                                        url = decryptedUrl,
-                                        serverName = "Helios $serverName",
-                                        resolutionLabel = "1080p",
-                                        quality = badge,
-                                        isM3u8 = true,
-                                        releaseType = AudioReleaseType.ORIGINAL,
-                                        headers = defaultHeaders
-                                    )
-                                    if (emittedStreamUrls.add(src.url)) send(StreamEmission.SourceFound(src))
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
-        // 4. Aphrodite CDN
-        launch {
-            try {
-                val aphroditeStreams = fetchAphroditeStreams(tmdbId, isTv, season, episode)
-                aphroditeStreams.forEach { aphroditeSource ->
-                    if (emittedStreamUrls.add(aphroditeSource.url)) {
-                        send(StreamEmission.SourceFound(aphroditeSource))
-                    }
-                }
-            } catch (_: Throwable) {}
-        }
-
-        // 5. Lul Engine
+        // 4. Lul Multi-Audio Engine
         launch {
             try {
                 val lulUrl = if (isTv && season != null && episode != null) {
@@ -650,6 +622,11 @@ class AetherPlugin(
                         val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
                             ?: root["stream_url"]?.jsonPrimitive?.contentOrNull
                         if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                            val lulHeaders = mapOf(
+                                "Referer" to "https://aether.ist/",
+                                "Origin" to "https://aether.ist",
+                                "User-Agent" to defaultHeaders["User-Agent"]!!
+                            )
                             val (audioBadge, manifestSubs) = inspectLulManifest(streamUrl)
                             val badge = if (audioBadge.isNotBlank()) {
                                 "Aether Lul ($audioBadge Auto/1080p HLS)"
@@ -659,14 +636,21 @@ class AetherPlugin(
                             val relType = if (audioBadge.isNotBlank()) AudioReleaseType.DUAL_AUDIO else AudioReleaseType.ORIGINAL
                             val src = StreamSource(
                                 url = streamUrl,
-                                serverName = "Aether Lul",
-                                resolutionLabel = "1080p",
+                                serverName = "Lul (Auto)",
+                                resolutionLabel = "Auto",
                                 quality = badge,
                                 isM3u8 = true,
                                 releaseType = relType,
-                                headers = defaultHeaders
+                                headers = lulHeaders
                             )
                             if (emittedStreamUrls.add(src.url)) send(StreamEmission.SourceFound(src))
+
+                            // Extract individual variants from Lul master playlist
+                            val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Lul", lulHeaders)
+                            variants.forEach { v ->
+                                if (emittedStreamUrls.add(v.url)) send(StreamEmission.SourceFound(v.copy(serverName = "Lul (${v.resolutionLabel})")))
+                            }
+
                             for ((subUrl, subLang) in manifestSubs) {
                                 val isHi = subLang.contains("[CC]", ignoreCase = true)
                                 val cleanLang = subLang.replace(Regex("""\s*\[CC\]""", RegexOption.IGNORE_CASE), "").trim()
@@ -677,46 +661,6 @@ class AetherPlugin(
                             }
                         }
                     }
-                }
-            } catch (_: Exception) {}
-        }
-
-        // 6. Third-Party Host Embeds via ExtractorRegistry
-        launch {
-            try {
-                val embedEndpoints = if (isTv && season != null && episode != null) {
-                    listOf(
-                        "https://embed.aether.cx/tv/$tmdbId/$season/$episode",
-                        "https://vidsrc.to/embed/tv/$tmdbId/$season/$episode"
-                    )
-                } else {
-                    listOf(
-                        "https://embed.aether.cx/movie/$tmdbId",
-                        "https://vidsrc.to/embed/movie/$tmdbId"
-                    )
-                }
-                for (endpoint in embedEndpoints) {
-                    try {
-                        val req = Request.Builder()
-                            .url(endpoint)
-                            .header("User-Agent", defaultHeaders["User-Agent"]!!)
-                            .header("Referer", "https://aether.ist/")
-                            .build()
-                        client.newCall(req).execute().use { resp ->
-                            if (resp.isSuccessful) {
-                                val html = resp.body?.string() ?: ""
-                                val iframeRegex = Regex("""iframe\s+[^>]*src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-                                val matches = iframeRegex.findAll(html).map { it.groupValues[1] }.toList()
-                                for (rawEmbedUrl in matches) {
-                                    val embedUrl = if (rawEmbedUrl.startsWith("//")) "https:$rawEmbedUrl" else rawEmbedUrl
-                                    val extracted = ExtractorRegistry.resolveUrl(embedUrl, endpoint)
-                                    extracted.forEach { s ->
-                                        if (emittedStreamUrls.add(s.url)) send(StreamEmission.SourceFound(s))
-                                    }
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {}
                 }
             } catch (_: Exception) {}
         }
@@ -741,76 +685,6 @@ class AetherPlugin(
             if (isCc) "$base [cc]" else base
         }
         StreamResult(streams = streamSources, subtitles = sortedSubs)
-    }
-
-    private fun fetchLinkVariants(masterUrl: String, headers: Map<String, String>): List<StreamSource> {
-        val list = mutableListOf<StreamSource>()
-        try {
-            val req = Request.Builder().url(masterUrl)
-            headers.forEach { (k, v) -> req.header(k, v) }
-            client.newCall(req.build()).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: ""
-                    if (body.startsWith("#EXTM3U")) {
-                        val lines = body.lines()
-                        val baseUri = URI(masterUrl)
-                        val seenRes = mutableSetOf<String>()
-
-                        for (i in lines.indices) {
-                            val line = lines[i].trim()
-                            if (line.startsWith("#EXT-X-STREAM-INF")) {
-                                val resMatch = Regex("""RESOLUTION=(\d+x\d+)""").find(line)?.groupValues?.get(1)
-                                val height = resMatch?.substringAfter("x")?.toIntOrNull()
-
-                                for (j in (i + 1) until lines.size) {
-                                    val subLine = lines[j].trim()
-                                    if (subLine.isNotEmpty() && !subLine.startsWith("#")) {
-                                        val resolvedUrl = baseUri.resolve(subLine).toString()
-                                        val qLabel = when {
-                                            height != null && height >= 1080 -> "1080p FHD"
-                                            height != null && height >= 720 -> "720p HD"
-                                            height != null && height >= 480 -> "480p SD"
-                                            height != null -> "${height}p"
-                                            else -> "Direct"
-                                        }
-                                        if (seenRes.add(qLabel)) {
-                                            list.add(
-                                                StreamSource(
-                                                    url = resolvedUrl,
-                                                    quality = "Aether Link ($qLabel HLS)",
-                                                    isM3u8 = true,
-                                                    headers = headers
-                                                )
-                                            )
-                                        }
-                                        break
-                                    }
-                                }
-                            }
-                        }
-                        // Add Master auto stream
-                        list.add(
-                            StreamSource(
-                                url = masterUrl,
-                                quality = "Aether Link (Auto HLS)",
-                                isM3u8 = true,
-                                headers = headers
-                            )
-                        )
-                        list.sortByDescending {
-                            when {
-                                it.quality.contains("1080p") -> 1080
-                                it.quality.contains("720p") -> 720
-                                it.quality.contains("480p") -> 480
-                                it.quality.contains("Auto") -> 100
-                                else -> 50
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-        return list
     }
 
     private fun inspectLulManifest(manifestUrl: String): Pair<String, List<Pair<String, String>>> {
@@ -895,8 +769,8 @@ class AetherPlugin(
                 StreamSource(
                     url = resolvedUrl,
                     serverName = "Aphrodite",
-                    resolutionLabel = "Auto",
-                    quality = "Aether Aphrodite CDN (Auto HLS)",
+                    resolutionLabel = "1080p FHD",
+                    quality = "Aether Aphrodite CDN (1080p FHD HLS)",
                     isM3u8 = true,
                     releaseType = AudioReleaseType.ORIGINAL,
                     headers = aphroditeHeaders
@@ -915,8 +789,6 @@ class AetherPlugin(
             return@withContext results
         }
 
-        // Direct stream failed or is the Cloudflare VPN honeypot:
-        // Fall back to decrypted master stream mapped to Aphrodite!
         fetchAphroditeFallbackStreams(tmdbId, isTv, season, episode)
     }
 
@@ -1057,7 +929,7 @@ class AetherPlugin(
                                     variants.add(
                                         StreamSource(
                                             url = resolvedUrl,
-                                            serverName = "Aphrodite",
+                                            serverName = "$serverPrefix ($qLabel)",
                                             resolutionLabel = qLabel,
                                             quality = "$serverPrefix ($qLabel)",
                                             isM3u8 = true,
@@ -1144,51 +1016,78 @@ class AetherPlugin(
 
         val options = mutableListOf<DownloadOption>()
 
-        // 1. Resolve Link Engine variants (High throughput edge)
+        // 1. Helios Direct Quality Mirrors (1080p, 720p, 480p)
         try {
-            val linkUrl = if (isTv && season != null && episode != null) {
-                "https://link.aether.cx/tv/$tmdbId/$season/$episode"
+            val heliosUrl = if (isTv && season != null && episode != null) {
+                "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
             } else {
-                "https://link.aether.cx/movie/$tmdbId"
+                "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=movie"
             }
-            val req = Request.Builder()
-                .url(linkUrl)
-                .header("User-Agent", defaultHeaders["User-Agent"]!!)
-                .header("Referer", "https://aether.ist/")
-                .header("Origin", "https://aether.ist")
-                .build()
+            val req = newRequestBuilder(heliosUrl).build()
             client.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: ""
                     val root = json.parseToJsonElement(body).jsonObject
-                    val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
-                    if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
-                        val linkHeaders = mapOf(
-                            "Referer" to "https://nextgencloudfabric.com/",
-                            "Origin" to "https://nextgencloudfabric.com",
-                            "User-Agent" to defaultHeaders["User-Agent"]!!,
-                            "Accept-Ranges" to "bytes"
-                        )
-                        val variants = fetchLinkVariants(streamUrl, linkHeaders)
-                        for (v in variants) {
-                            val q = v.quality.substringAfter("Link (").substringBefore(" HLS)").ifBlank { "1080p FHD" }
-                            val sizeEstimate = when {
-                                q.contains("1080") -> "~2.4 GB"
-                                q.contains("720") -> "~1.2 GB"
-                                q.contains("480") -> "~650 MB"
-                                else -> "~1.8 GB"
+                    val sources = root["sources"]?.jsonObject
+                    if (sources != null) {
+                        val moscowEnc = sources["Moscow"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
+                            ?: sources.values.firstOrNull()?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
+                        if (moscowEnc != null) {
+                            val dec = decryptHeliosUrl(moscowEnc)
+                            if (dec != null && dec.startsWith("http")) {
+                                val qParam = dec.substringAfter("?q=", "").substringBefore("&")
+                                if (qParam.isNotBlank()) {
+                                    val decodedBytes = try {
+                                        java.util.Base64.getUrlDecoder().decode(qParam)
+                                    } catch (_: Exception) {
+                                        val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                                        java.util.Base64.getDecoder().decode(padded)
+                                    }
+                                    val qRoot = json.parseToJsonElement(String(decodedBytes, Charsets.UTF_8)).jsonObject
+                                    val customHeadersObj = qRoot["h"]?.jsonObject
+                                    val streamHeaders = mutableMapOf<String, String>()
+                                    customHeadersObj?.forEach { (k, v) ->
+                                        v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                                    }
+                                    val reqHeaders = mapOf(
+                                        "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                                        "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                                        "User-Agent" to defaultHeaders["User-Agent"]!!
+                                    )
+
+                                    val variantsArr = qRoot["v"]?.jsonArray
+                                    if (variantsArr != null) {
+                                        for (vElem in variantsArr) {
+                                            val vObj = vElem.jsonObject
+                                            val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                            val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                            val qLabel = when {
+                                                vQuality.contains("1080") -> "1080p FHD"
+                                                vQuality.contains("720") -> "720p HD"
+                                                vQuality.contains("480") -> "480p SD"
+                                                else -> vQuality
+                                            }
+                                            val sizeEstimate = when {
+                                                qLabel.contains("1080") -> "~2.2 GB"
+                                                qLabel.contains("720") -> "~1.2 GB"
+                                                qLabel.contains("480") -> "~650 MB"
+                                                else -> "~1.5 GB"
+                                            }
+                                            options.add(
+                                                DownloadOption(
+                                                    title = "$qLabel - Aether Helios",
+                                                    quality = qLabel,
+                                                    size = sizeEstimate,
+                                                    url = vUrl,
+                                                    source = "Aether Helios CDN",
+                                                    provider = name,
+                                                    headers = reqHeaders
+                                                )
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                            options.add(
-                                DownloadOption(
-                                    title = "$q - Aether High-Speed",
-                                    quality = q,
-                                    size = sizeEstimate,
-                                    url = v.url,
-                                    source = "Aether Link CDN",
-                                    provider = name,
-                                    headers = linkHeaders
-                                )
-                            )
                         }
                     }
                 }
@@ -1215,13 +1114,12 @@ class AetherPlugin(
                             "Origin" to "https://$streamHost",
                             "User-Agent" to defaultHeaders["User-Agent"]!!
                         )
-                        val hlsDownloadUrl = if (streamUrl.contains(".m3u8")) streamUrl else "$streamUrl&output=.m3u8"
                         options.add(
                             DownloadOption(
                                 title = "1080p Adaptive - Aether Meridian",
                                 quality = "1080p FHD",
-                                size = "~2.1 GB",
-                                url = hlsDownloadUrl,
+                                size = "~2.4 GB",
+                                url = streamUrl,
                                 source = "Aether Meridian CDN",
                                 provider = name,
                                 headers = meridianHeaders
@@ -1241,13 +1139,12 @@ class AetherPlugin(
             }
             options.addAll(
                 streamResult.streams.map { stream ->
-                    val urlWithExt = if (stream.url.contains(".m3u8")) stream.url else if (stream.url.contains("?")) "${stream.url}&output=.m3u8" else "${stream.url}#master.m3u8"
                     DownloadOption(
                         title = "${stream.quality} - Aether Direct",
-                        quality = stream.quality,
+                        quality = stream.resolutionLabel.ifBlank { "1080p FHD" },
                         size = "~2.0 GB",
-                        url = urlWithExt,
-                        source = "Aether (${stream.quality})",
+                        url = stream.url,
+                        source = "Aether (${stream.serverName})",
                         provider = name,
                         headers = stream.headers
                     )
@@ -1255,7 +1152,7 @@ class AetherPlugin(
             )
         }
 
-        options.sortByDescending {
+        options.distinctBy { it.url }.sortedByDescending {
             when {
                 it.quality.contains("1080") -> 1080
                 it.quality.contains("720") -> 720
@@ -1264,8 +1161,6 @@ class AetherPlugin(
                 else -> 50
             }
         }
-
-        options
     }
 
     override suspend fun resolveLogo(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
@@ -1284,5 +1179,11 @@ class AetherPlugin(
         null
     }
 
-    override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = emptyList()
+    override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = withContext(Dispatchers.IO) {
+        val cleanTmdbId = Regex("""\b(\d+)\b""").find(mediaId)?.value ?: mediaId
+        if (cleanTmdbId.isBlank()) return@withContext emptyList()
+        val isTv = type == MediaType.TV_SERIES
+        val enriched = TmdbBridge.fetchEnrichedDetails(client, cleanTmdbId, isTv, name, tmdbApiKey)
+        enriched?.cast ?: emptyList()
+    }
 }

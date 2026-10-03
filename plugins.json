@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/atlantic.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "90b0112727840a6bcefcb6b7a94c2efd8ef85bcf7d2c5278ce7edffcb7ab9efd",
+      "sha256": "37f6a0cf8d63b50cb114d3171b643a7061b800e6b9ab275dfb822a1a2fdb9531",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -35,7 +35,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/uhdmovies.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "9ca55e3d6882d3e8a03dd3a60c1da29be4d53a9d9d1444c5f1ab802d0797e9e9",
+      "sha256": "8373b33069cc932026a1c548fdc700ad6f26570fc9e9fb7de6c4e25c40029f42",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -55,7 +55,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/moviesleech.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "595c4b0f792da6ddc6fa4711a23ff76fa5c55d6faf84e6aae6af057abea807a2",
+      "sha256": "e82c79dfc064ae46f010c60fe9e75448c495e935e03fd94e5e2d6ff0d96d99e8",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -75,7 +75,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "e7af889058883c4138c0f4da25c24789f620740060c64276ac04022c4d7da4a5",
+      "sha256": "53d8b09ab3ca76bedbe5ec57ce50056f88c8d47cb70833aed6ceca0ceaa39817",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -95,7 +95,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/pvrplay.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "1f54b0301cc07585c32bb45af1d130401af1bd7885202753b5d22059cdea4329",
+      "sha256": "ae4e84743b6a7124f1b67797b05ee9ac419499d339f0267e01c86ccf749e1618",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -115,7 +115,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "b38d581ed3c5045b3bbcb65b8b270e72cc541191d299ddcbc5794865d07e43a0",
+      "sha256": "94dde591c3a4da350a17d8116456ea0d543c9111c277219552fde861dea2261f",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -126,16 +126,16 @@
     {
       "id": "aether",
       "name": "Aether",
-      "version": 2,
-      "versionName": "1.1.0",
+      "version": 3,
+      "versionName": "1.2.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://aether.ist",
-      "description": "Curated multi-provider streaming ecosystem with Helios/Aphrodite mirrors and subtitles (Decoupled EUP).",
+      "description": "Curated multi-provider streaming ecosystem with Helios 1080p/720p/480p, Aphrodite, Meridian, Lul mirrors, subtitles, and downloads (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.AetherPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d7b373a203d39033bc465bd5f23ffe48a6589ccbcbfede58ce20abe9317c5670",
+      "sha256": "58a80fbc9815e68373d089f86b4960fecd5b1d27348bb72eb078960b5fbabbfc",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -155,7 +155,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "47c7a58933bf40852b272b56a2960309f9db63be3e2cb0f4bd25b86a91bc6f3f",
+      "sha256": "6b3ba68eb5a842604885350bb5650038f90c5cf5278b9a1ca9371e425fc6dec9",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -175,7 +175,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "10cfe34153c207abdd6047249ab0cca8236dee937b3aea979281ac609677eb22",
+      "sha256": "9548901d5d2a8ebdf23959d8816d0977bed0e86e42e3c52cd7b1388c647a8986",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
