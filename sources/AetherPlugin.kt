@@ -633,14 +633,14 @@ class AetherPlugin(
                             )
                             val (audioBadge, manifestSubs) = inspectLulManifest(streamUrl)
                             val badge = if (audioBadge.isNotBlank()) {
-                                "Aether Lul ($audioBadge Auto/1080p HLS)"
+                                "Aether Lula ($audioBadge Auto/1080p HLS)"
                             } else {
-                                "Aether Lul (Auto/1080p HLS)"
+                                "Aether Lula (Auto/1080p HLS)"
                             }
                             val relType = if (audioBadge.isNotBlank()) AudioReleaseType.DUAL_AUDIO else AudioReleaseType.ORIGINAL
                             val src = StreamSource(
                                 url = streamUrl,
-                                serverName = "Lul (Auto)",
+                                serverName = "Lula (Auto)",
                                 resolutionLabel = "Auto",
                                 quality = badge,
                                 isM3u8 = true,
@@ -650,10 +650,10 @@ class AetherPlugin(
                             val lulKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
                             if (emittedStreamKeys.add(lulKey)) send(StreamEmission.SourceFound(src))
 
-                            // Extract individual variants from Lul master playlist
-                            val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Lul", lulHeaders)
+                            // Extract individual variants from Lula master playlist
+                            val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Lula", lulHeaders)
                             variants.forEach { v ->
-                                val vSrc = v.copy(serverName = "Lul (${v.resolutionLabel})")
+                                val vSrc = v.copy(serverName = "Lula (${v.resolutionLabel})")
                                 val vKey = "${vSrc.serverName}:${vSrc.resolutionLabel}:${vSrc.url}"
                                 if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(vSrc))
                             }
@@ -665,6 +665,51 @@ class AetherPlugin(
                                 if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(subUrl)) {
                                     send(StreamEmission.SubtitleFound(SubtitleTrack(url = subUrl, language = subLang)))
                                 }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 5. Link Multi-Quality Engine
+        launch {
+            try {
+                val linkUrl = if (isTv && season != null && episode != null) {
+                    "https://link.aether.cx/tv/$tmdbId/$season/$episode"
+                } else {
+                    "https://link.aether.cx/movie/$tmdbId"
+                }
+                val req = newRequestBuilder(linkUrl).build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: ""
+                        val root = json.parseToJsonElement(body).jsonObject
+                        val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
+                            ?: root["stream_url"]?.jsonPrimitive?.contentOrNull
+                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                            val linkHeaders = mapOf(
+                                "Referer" to "https://link.aether.cx/",
+                                "Origin" to "https://link.aether.cx",
+                                "User-Agent" to defaultHeaders["User-Agent"]!!
+                            )
+                            val src = StreamSource(
+                                url = streamUrl,
+                                serverName = "Link (Auto)",
+                                resolutionLabel = "Auto",
+                                quality = "Aether Link (Auto HLS)",
+                                isM3u8 = true,
+                                releaseType = AudioReleaseType.ORIGINAL,
+                                headers = linkHeaders
+                            )
+                            val linkKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                            if (emittedStreamKeys.add(linkKey)) send(StreamEmission.SourceFound(src))
+
+                            val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Link", linkHeaders)
+                            variants.forEach { v ->
+                                val vSrc = v.copy(serverName = "Link (${v.resolutionLabel})")
+                                val vKey = "${vSrc.serverName}:${vSrc.resolutionLabel}:${vSrc.url}"
+                                if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(vSrc))
                             }
                         }
                     }
@@ -1161,7 +1206,43 @@ class AetherPlugin(
             }
         } catch (_: Exception) {}
 
-        // 3. Fallback to stream links if options empty
+        // 3. Add Link high-speed HLS option
+        try {
+            val linkUrl = if (isTv && season != null && episode != null) {
+                "https://link.aether.cx/tv/$tmdbId/$season/$episode"
+            } else {
+                "https://link.aether.cx/movie/$tmdbId"
+            }
+            val req = newRequestBuilder(linkUrl).build()
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    val root = json.parseToJsonElement(body).jsonObject
+                    val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
+                        ?: root["stream_url"]?.jsonPrimitive?.contentOrNull
+                    if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                        val linkHeaders = mapOf(
+                            "Referer" to "https://link.aether.cx/",
+                            "Origin" to "https://link.aether.cx",
+                            "User-Agent" to defaultHeaders["User-Agent"]!!
+                        )
+                        options.add(
+                            DownloadOption(
+                                title = "1080p Adaptive - Aether Link",
+                                quality = "1080p FHD",
+                                size = "~2.2 GB",
+                                url = streamUrl,
+                                source = "Aether Link CDN",
+                                provider = name,
+                                headers = linkHeaders
+                            )
+                        )
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+
+        // 4. Fallback to stream links if options empty
         if (options.isEmpty()) {
             val streamResult = try {
                 getStreamLinks(episodeData)
