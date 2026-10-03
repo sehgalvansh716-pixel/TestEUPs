@@ -972,6 +972,7 @@ class FourKHDHubPlugin(
                         text.contains("Watch Online", ignoreCase = true)
 
                 if (isDirectServer) {
+                    val isGoogleDirect = href.contains("pixel.hubcloud.ist") || href.contains("gpdl.hubcloud.ist") || text.contains("10Gbps")
                     val rawUrl = when {
                         href.contains("hbplay.pages.dev/?u=") -> {
                             val uParam = href.substringAfter("?u=").substringBefore("&")
@@ -981,20 +982,25 @@ class FourKHDHubPlugin(
                             val fileId = href.substringAfter("/u/").substringBefore("/").substringBefore("?")
                             "https://pixeldrain.com/api/file/$fileId"
                         }
-                        href.contains("pixel.hubcloud.ist") || href.contains("gpdl.hubcloud.ist") || text.contains("10Gbps") -> {
-                            resolveGoogleCdnLink(href) ?: href
+                        isGoogleDirect -> {
+                            resolveGoogleCdnLink(href)
                         }
                         else -> href
-                    }
+                    } ?: continue
+
                     val directUrl = rawUrl.replace(" ", "%20")
 
                     // Only emit media streams that are actual media files, never intermediate HTML pages
-                    if (directUrl.contains("hubcloud.ist/?id=") && !directUrl.contains("video-downloads")) {
+                    if (directUrl.contains("hubcloud.ist/?id=") || directUrl.contains("gamerxyt.com/")) {
+                        continue
+                    }
+                    if (!directUrl.startsWith("http")) {
                         continue
                     }
 
+                    val isGoogleStream = directUrl.contains("googleusercontent.com") || text.contains("10Gbps")
                     val serverName = when {
-                        directUrl.contains("googleusercontent.com") || text.contains("10Gbps") -> "HubCloud 10Gbps Google Direct"
+                        isGoogleStream -> "HubCloud 10Gbps Google Direct"
                         href.contains("r2.cloudflarestorage.com") || text.contains("FSL") -> "HubCloud FSL (R2 Direct)"
                         directUrl.contains("pixeldrain.com/api/file") -> "Pixeldrain Direct"
                         href.contains("hbplay.pages.dev") || text.contains("Watch Online") -> "HubCloud Web Stream"
@@ -1005,7 +1011,8 @@ class FourKHDHubPlugin(
                         ResolvedDirectServer(
                             name = serverName,
                             url = directUrl,
-                            isDirectR2 = directUrl.contains("r2.cloudflarestorage.com")
+                            isDirectR2 = directUrl.contains("r2.cloudflarestorage.com"),
+                            isSeekableStream = !isGoogleStream
                         )
                     )
                 }
@@ -1013,11 +1020,11 @@ class FourKHDHubPlugin(
         } catch (_: Exception) {}
         return servers.distinctBy { it.url }.sortedByDescending { server ->
             when {
-                server.url.contains("googleusercontent.com") || server.name.contains("10Gbps") -> 5
-                server.isDirectR2 || server.url.contains("r2.cloudflarestorage.com") || server.name.contains("R2") || server.name.contains("FSL") -> 4
-                server.name.contains("Web Stream") -> 3
-                server.url.contains("pixeldrain") -> 2
-                else -> 1
+                server.isDirectR2 || server.url.contains("r2.cloudflarestorage.com") || server.name.contains("FSL") -> 5
+                server.name.contains("Web Stream") -> 4
+                server.url.contains("pixeldrain") -> 3
+                server.url.contains("googleusercontent.com") || server.name.contains("10Gbps") -> 1
+                else -> 2
             }
         }
     }
@@ -1032,8 +1039,10 @@ class FourKHDHubPlugin(
             client.newCall(req).execute().use { resp ->
                 val finalUrl = resp.request.url.toString()
                 if (finalUrl.contains("dl.php?link=")) {
-                    val link = finalUrl.substringAfter("dl.php?link=").substringBefore("&")
-                    java.net.URLDecoder.decode(link, "UTF-8")
+                    val encoded = finalUrl.substringAfter("dl.php?link=")
+                    val link = if (encoded.contains("&")) encoded.substringBefore("&") else encoded
+                    val decoded = java.net.URLDecoder.decode(link, "UTF-8")
+                    if (decoded.startsWith("http")) decoded else null
                 } else if (resp.isSuccessful && !finalUrl.contains("hubcloud") && !finalUrl.contains("gamerxyt")) {
                     finalUrl
                 } else {
@@ -1042,6 +1051,21 @@ class FourKHDHubPlugin(
             }
         } catch (_: Exception) {
             null
+        }
+    }
+
+    private fun isDownloadLinkAlive(url: String): Boolean {
+        return try {
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", defaultUserAgent)
+                .header("Referer", "https://gamerxyt.com/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                resp.isSuccessful
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -1175,7 +1199,8 @@ class FourKHDHubPlugin(
                     val audioTracks = parseAudioTracksFromTitle(variant.title)
                     val releaseType = determineReleaseType(variant.title, audioTracks)
 
-                    for (server in directServers) {
+                    val streamableServers = directServers.filter { it.isSeekableStream }
+                    for (server in streamableServers) {
                         val cleanStreamUrl = server.url.replace(" ", "%20")
                         if (emittedUrls.add(cleanStreamUrl)) {
                             val serverLabel = "${server.name} [${variant.quality}]"
@@ -1250,12 +1275,28 @@ class FourKHDHubPlugin(
                 val hubcloudUrl = bypassGreenmotors(variant.greenmotorsUrl) ?: return@parallelMapIsolated emptyList<DownloadOption>()
                 val gamerxytUrl = resolveHubcloud(hubcloudUrl) ?: return@parallelMapIsolated emptyList<DownloadOption>()
                 val servers = resolveGamerxyt(gamerxytUrl)
-                servers.map { s ->
+                servers.mapNotNull { s ->
                     val dlUrl = s.url.replace(" ", "%20")
+                    if (!s.isSeekableStream) {
+                        // For non-seekable Google Direct links: probe before emitting to ensure they are not dead (HTTP 403 / 400)
+                        if (!isDownloadLinkAlive(dlUrl)) return@mapNotNull null
+                    }
                     val streamReferer = when {
                         dlUrl.contains("pixeldrain.com", ignoreCase = true) -> "https://pixeldrain.com/"
                         dlUrl.contains("r2.cloudflarestorage.com", ignoreCase = true) || dlUrl.contains("gamerxyt.com", ignoreCase = true) -> "https://gamerxyt.com/"
-                        else -> "https://hubcloud.ist/"
+                        else -> "https://gamerxyt.com/"
+                    }
+                    val headers = if (s.isSeekableStream) {
+                        mapOf(
+                            "User-Agent" to defaultUserAgent,
+                            "Referer" to streamReferer,
+                            "Accept-Ranges" to "bytes"
+                        )
+                    } else {
+                        mapOf(
+                            "User-Agent" to defaultUserAgent,
+                            "Referer" to "https://gamerxyt.com/"
+                        )
                     }
                     DownloadOption(
                         title = "${variant.title} - ${s.name}",
@@ -1264,11 +1305,7 @@ class FourKHDHubPlugin(
                         url = dlUrl,
                         source = s.name,
                         provider = name,
-                        headers = mapOf(
-                            "User-Agent" to defaultUserAgent,
-                            "Referer" to streamReferer,
-                            "Accept-Ranges" to "bytes"
-                        )
+                        headers = headers
                     )
                 }
             } catch (_: Exception) {
@@ -1470,7 +1507,8 @@ class FourKHDHubPlugin(
     data class ResolvedDirectServer(
         val name: String,
         val url: String,
-        val isDirectR2: Boolean = false
+        val isDirectR2: Boolean = false,
+        val isSeekableStream: Boolean = true
     )
 
     private suspend fun resolveImdbId(tmdbId: String, isTv: Boolean): String? = withContext(Dispatchers.IO) {
