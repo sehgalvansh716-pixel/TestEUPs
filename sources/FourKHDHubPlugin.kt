@@ -96,13 +96,29 @@ class FourKHDHubPlugin(
 
             val rows = deferred.awaitAll().filterNotNull().toMutableList()
 
-            // Ensure the first row has at least 8 items with official transparent PNG logos for the Home Hero Carousel
+            // Ensure the first row has at least 8 items with official transparent PNG logos and 16:9 backdrops for the Home Hero Carousel
             if (rows.isNotEmpty()) {
                 val firstRow = rows.first()
                 val candidateItemsWithLogos = firstRow.items.take(10).map { item ->
                     async {
-                        val logo = resolveLogo(item)
-                        if (logo != null) item.copy(logoUrl = logo) else item
+                        val isTv = item.type == MediaType.TV_SERIES
+                        val clean = cleanTitleForDisplay(item.title)
+                        val tmdbId = TmdbBridge.searchTmdbId(client, clean, item.year, isTv, tmdbApiKey)
+                        var logo = item.logoUrl
+                        var backdrop = item.backdropUrl
+                        if (tmdbId != null) {
+                            if (logo == null) {
+                                logo = TmdbBridge.resolveLogo(client, tmdbId, isTv, tmdbApiKey)
+                            }
+                            val enriched = TmdbBridge.fetchEnrichedDetails(client, tmdbId, isTv, clean, tmdbApiKey)
+                            if (enriched?.backdropUrl != null) {
+                                backdrop = enriched.backdropUrl
+                            }
+                        }
+                        item.copy(
+                            logoUrl = logo ?: item.logoUrl,
+                            backdropUrl = backdrop ?: item.backdropUrl
+                        )
                     }
                 }.awaitAll() + firstRow.items.drop(10)
                 listOf(firstRow.copy(items = candidateItemsWithLogos)) + rows.drop(1)
@@ -868,6 +884,22 @@ class FourKHDHubPlugin(
         if (cleanUrl.contains("gamerxyt")) {
             return cleanUrl
         }
+        if (cleanUrl.contains("hubdrive")) {
+            return try {
+                val req = Request.Builder()
+                    .url(cleanUrl)
+                    .header("User-Agent", defaultUserAgent)
+                    .build()
+                val html = client.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return null
+                    resp.body?.string() ?: ""
+                }
+                val hubMatch = Regex("""href=['"](https?://[^/'"\s]*hubcloud[^/'"\s]*/drive/[^'"]+)['"]""").find(html)?.groupValues?.get(1)
+                if (hubMatch != null) resolveHubcloud(hubMatch) else null
+            } catch (_: Exception) {
+                null
+            }
+        }
         return try {
             val req = Request.Builder()
                 .url(cleanUrl)
@@ -940,7 +972,7 @@ class FourKHDHubPlugin(
                         text.contains("Watch Online", ignoreCase = true)
 
                 if (isDirectServer) {
-                    val directUrl = when {
+                    val rawUrl = when {
                         href.contains("hbplay.pages.dev/?u=") -> {
                             val uParam = href.substringAfter("?u=").substringBefore("&")
                             try { base64Decode(uParam) } catch (_: Exception) { href }
@@ -954,6 +986,7 @@ class FourKHDHubPlugin(
                         }
                         else -> href
                     }
+                    val directUrl = rawUrl.replace(" ", "%20")
 
                     // Only emit media streams that are actual media files, never intermediate HTML pages
                     if (directUrl.contains("hubcloud.ist/?id=") && !directUrl.contains("video-downloads")) {
@@ -1047,8 +1080,91 @@ class FourKHDHubPlugin(
             variants.addAll(resolveVariantsOnDemand(episodeData))
         }
 
+        // Subtitle Job (Granite & Natsuki)
+        if (!tmdbId.isNullOrBlank()) {
+            val resolvedId = tmdbId
+            val sNum = seasonNum
+            val eNum = epNum
+            val isTvShow = sNum != null && eNum != null
+
+            val emittedSubUrls = ConcurrentHashMap.newKeySet<String>()
+            val emittedSubLangs = ConcurrentHashMap.newKeySet<String>()
+
+            launch {
+                // 1. Granite Subtitles API (vdrk.site)
+                try {
+                    val graniteUrl = if (isTvShow) {
+                        "https://sub.vdrk.site/v1/tv/$resolvedId/$sNum/$eNum"
+                    } else {
+                        "https://sub.vdrk.site/v1/movie/$resolvedId"
+                    }
+                    val req = Request.Builder().url(graniteUrl).header("User-Agent", defaultUserAgent).build()
+                    client.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val body = resp.body?.string() ?: ""
+                            val arr = json.parseToJsonElement(body).jsonArray
+                            for (elem in arr) {
+                                val obj = elem.jsonObject
+                                val fileUrl = obj["file"]?.jsonPrimitive?.contentOrNull ?: continue
+                                val rawLabel = obj["label"]?.jsonPrimitive?.contentOrNull ?: "English"
+                                val isHi = rawLabel.contains(Regex("""\b(hi\d*|sdh)\b""", RegexOption.IGNORE_CASE))
+                                val trackNum = Regex("""\d+$""").find(rawLabel)?.value
+                                if (trackNum != null && (trackNum.toIntOrNull() ?: 1) > 1) continue
+                                val cleanName = rawLabel.replace(Regex("""\s*(hi\d*|sdh)\b""", RegexOption.IGNORE_CASE), "")
+                                    .replace(Regex("""\d+$"""), "")
+                                    .trim()
+                                val displayLabel = if (isHi) "$cleanName [CC]" else cleanName
+                                val langKey = cleanName.lowercase().trim()
+                                val variantKey = if (isHi) "$langKey [cc]" else langKey
+
+                                if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(fileUrl)) {
+                                    send(StreamEmission.SubtitleFound(SubtitleTrack(url = fileUrl, language = displayLabel)))
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                // 2. Natsuki Subtitles API
+                try {
+                    val imdb = resolveImdbId(resolvedId, isTvShow)
+                    if (!imdb.isNullOrBlank() && imdb.startsWith("tt")) {
+                        val natsukiUrl = if (isTvShow) {
+                            "https://natsuki.hls.lol/subs?imdbId=$imdb&season=$sNum&episode=$eNum"
+                        } else {
+                            "https://natsuki.hls.lol/subs?imdbId=$imdb"
+                        }
+                        val req = Request.Builder().url(natsukiUrl).header("User-Agent", defaultUserAgent).build()
+                        client.newCall(req).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                val body = resp.body?.string() ?: ""
+                                val root = json.parseToJsonElement(body).jsonObject
+                                val subsArr = root["subtitles"]?.jsonArray
+                                subsArr?.forEach { sElem ->
+                                    val sObj = sElem.jsonObject
+                                    val subUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                                    val rawLang = sObj["language"]?.jsonPrimitive?.contentOrNull
+                                        ?: sObj["langCode"]?.jsonPrimitive?.contentOrNull
+                                        ?: "English"
+                                    val isHi = sObj["hearingImpaired"]?.jsonPrimitive?.booleanOrNull == true
+                                    val cleanLang = rawLang.trim()
+                                    val displayLabel = if (isHi) "$cleanLang [CC]" else cleanLang
+                                    val langKey = cleanLang.lowercase()
+                                    val variantKey = if (isHi) "$langKey [cc]" else langKey
+
+                                    if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(subUrl)) {
+                                        send(StreamEmission.SubtitleFound(SubtitleTrack(url = subUrl, language = displayLabel)))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+
         // 2. Concurrently bypass Greenmotors links and extract direct Cloudflare R2 / 10Gbps media
-        val topVariants = variants.distinctBy { it.greenmotorsUrl }.take(6)
+        val topVariants = variants.distinctBy { it.greenmotorsUrl }.take(8)
         topVariants.forEach { variant ->
             launch {
                 try {
@@ -1060,22 +1176,23 @@ class FourKHDHubPlugin(
                     val releaseType = determineReleaseType(variant.title, audioTracks)
 
                     for (server in directServers) {
-                        if (emittedUrls.add(server.url)) {
+                        val cleanStreamUrl = server.url.replace(" ", "%20")
+                        if (emittedUrls.add(cleanStreamUrl)) {
                             val serverLabel = "${server.name} [${variant.quality}]"
                             val streamReferer = when {
-                                server.url.contains("pixeldrain.com", ignoreCase = true) -> "https://pixeldrain.com/"
-                                server.url.contains("r2.cloudflarestorage.com", ignoreCase = true) || server.url.contains("gamerxyt.com", ignoreCase = true) -> "https://gamerxyt.com/"
+                                cleanStreamUrl.contains("pixeldrain.com", ignoreCase = true) -> "https://pixeldrain.com/"
+                                cleanStreamUrl.contains("r2.cloudflarestorage.com", ignoreCase = true) || cleanStreamUrl.contains("gamerxyt.com", ignoreCase = true) -> "https://gamerxyt.com/"
                                 else -> "https://hubcloud.ist/"
                             }
 
                             send(
                                 StreamEmission.SourceFound(
                                     StreamSource(
-                                        url = server.url,
+                                        url = cleanStreamUrl,
                                         serverName = serverLabel,
                                         resolutionLabel = variant.quality,
                                         quality = variant.quality,
-                                        isM3u8 = server.url.contains(".m3u8", ignoreCase = true),
+                                        isM3u8 = cleanStreamUrl.contains(".m3u8", ignoreCase = true),
                                         audioTracks = audioTracks,
                                         releaseType = releaseType,
                                         headers = mapOf(
@@ -1128,22 +1245,23 @@ class FourKHDHubPlugin(
         }
 
         // Resolve top variants for high-speed direct download options
-        val resolved = variants.distinctBy { it.greenmotorsUrl }.take(6).parallelMapIsolated { variant ->
+        val resolved = variants.distinctBy { it.greenmotorsUrl }.take(8).parallelMapIsolated { variant ->
             try {
-                val hubcloudUrl = bypassGreenmotors(variant.greenmotorsUrl) ?: return@parallelMapIsolated emptyList()
-                val gamerxytUrl = resolveHubcloud(hubcloudUrl) ?: return@parallelMapIsolated emptyList()
+                val hubcloudUrl = bypassGreenmotors(variant.greenmotorsUrl) ?: return@parallelMapIsolated emptyList<DownloadOption>()
+                val gamerxytUrl = resolveHubcloud(hubcloudUrl) ?: return@parallelMapIsolated emptyList<DownloadOption>()
                 val servers = resolveGamerxyt(gamerxytUrl)
                 servers.map { s ->
+                    val dlUrl = s.url.replace(" ", "%20")
                     val streamReferer = when {
-                        s.url.contains("pixeldrain.com", ignoreCase = true) -> "https://pixeldrain.com/"
-                        s.url.contains("r2.cloudflarestorage.com", ignoreCase = true) || s.url.contains("gamerxyt.com", ignoreCase = true) -> "https://gamerxyt.com/"
+                        dlUrl.contains("pixeldrain.com", ignoreCase = true) -> "https://pixeldrain.com/"
+                        dlUrl.contains("r2.cloudflarestorage.com", ignoreCase = true) || dlUrl.contains("gamerxyt.com", ignoreCase = true) -> "https://gamerxyt.com/"
                         else -> "https://hubcloud.ist/"
                     }
                     DownloadOption(
                         title = "${variant.title} - ${s.name}",
                         quality = variant.quality,
                         size = variant.size,
-                        url = s.url,
+                        url = dlUrl,
                         source = s.name,
                         provider = name,
                         headers = mapOf(
@@ -1154,7 +1272,7 @@ class FourKHDHubPlugin(
                     )
                 }
             } catch (_: Exception) {
-                emptyList()
+                emptyList<DownloadOption>()
             }
         }.flatten()
 
@@ -1354,6 +1472,22 @@ class FourKHDHubPlugin(
         val url: String,
         val isDirectR2: Boolean = false
     )
+
+    private suspend fun resolveImdbId(tmdbId: String, isTv: Boolean): String? = withContext(Dispatchers.IO) {
+        try {
+            val endpoint = if (isTv) "tv" else "movie"
+            val url = "https://api.themoviedb.org/3/$endpoint/$tmdbId/external_ids?api_key=$tmdbApiKey"
+            val req = Request.Builder().url(url).header("User-Agent", defaultUserAgent).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string() ?: ""
+                val root = json.parseToJsonElement(body).jsonObject
+                root["imdb_id"]?.jsonPrimitive?.contentOrNull
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = emptyList()
 }
