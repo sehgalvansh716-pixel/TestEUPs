@@ -1465,9 +1465,10 @@ class OneShowsPlugin(
 
         logoCache[tmdbId]?.let { return@withContext it }
 
-        if (!mediaItem.logoUrl.isNullOrBlank()) {
-            logoCache[tmdbId] = mediaItem.logoUrl
-            return@withContext mediaItem.logoUrl
+        val itemLogo = mediaItem.logoUrl
+        if (!itemLogo.isNullOrBlank()) {
+            logoCache[tmdbId] = itemLogo
+            return@withContext itemLogo
         }
 
         val isTv = mediaItem.type == MediaType.TV_SERIES
@@ -1479,4 +1480,6 @@ class OneShowsPlugin(
 
         null
     }
+
+    override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = emptyList()
 }

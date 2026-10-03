@@ -1283,4 +1283,6 @@ class AetherPlugin(
 
         null
     }
+
+    override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = emptyList()
 }

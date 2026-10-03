@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "9480f0d638e1d032ce6340fa4a360867526414877f4f291e3193e5612bba8fdb",
+      "sha256": "b6b4fc167385b5ac63758a55281fbec8048548558f4e3a85b36cbc01d586d4ed",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -35,7 +35,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "beb0b747eab4ff559a67089c982e2d3ac40cf9205e5f42e396c07125ab46f62d",
+      "sha256": "943117a80ff72ec49e4abd79fafae354600ec7f3a5aa306b8a5e3c1e353df8cf",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -55,7 +55,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "6bd8d3d9d97052bf99a1d532df78f1b15905daee944db48f97b7b8342fe035a1",
+      "sha256": "7af690ef2b480d22af2eaa188a04791b9478ae30565088ebf261c90b90389f68",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -75,7 +75,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d0dc79f9d8836a6d94529e558d6c804c6ad29dce773ec90c8dad18e06d188607",
+      "sha256": "20a39ed6bfee30b2524dbb5804dc5eaf2d58e7f6fe1512ecb7042780d3e32acc",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",

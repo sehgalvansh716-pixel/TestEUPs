@@ -588,9 +588,10 @@ class CinejoyPlugin(
         }
 
         // Secondary: Metahub logo if already present or available
-        if (!mediaItem.logoUrl.isNullOrBlank()) {
-            logoMemoryCache[tmdbId] = mediaItem.logoUrl
-            return@withContext mediaItem.logoUrl
+        val itemLogo = mediaItem.logoUrl
+        if (!itemLogo.isNullOrBlank()) {
+            logoMemoryCache[tmdbId] = itemLogo
+            return@withContext itemLogo
         }
 
         null
@@ -599,10 +600,10 @@ class CinejoyPlugin(
     /**
      * Asynchronously fetches cast members with actor profile pictures from TMDB or Cinemeta.
      */
-    suspend fun fetchCast(
+    override suspend fun fetchCast(
         tmdbId: String,
-        imdbId: String? = null,
-        type: MediaType = MediaType.MOVIE
+        imdbId: String?,
+        type: MediaType
     ): List<CastMember> = withContext(Dispatchers.IO) {
         val typeStr = if (type == MediaType.TV_SERIES) "tv" else "movie"
 
