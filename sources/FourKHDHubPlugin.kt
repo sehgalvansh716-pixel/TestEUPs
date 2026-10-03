@@ -1159,6 +1159,26 @@ class FourKHDHubPlugin(
         }.flatten()
 
         downloadOptions.addAll(resolved)
+
+        if (downloadOptions.isEmpty()) {
+            try {
+                val streamResult = getStreamLinks(episodeData)
+                for (s in streamResult.streams) {
+                    downloadOptions.add(
+                        DownloadOption(
+                            title = "${s.serverName} (${s.quality})",
+                            quality = s.quality,
+                            size = "~2.0 GB",
+                            url = s.url,
+                            source = s.serverName,
+                            provider = name,
+                            headers = s.headers
+                        )
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+
         downloadOptions
     }
 
@@ -1299,42 +1319,42 @@ class FourKHDHubPlugin(
         foundVariants
     }
 
+    // ============================================================================
+    // Internal Serialized Models
+    // ============================================================================
+
+    @Serializable
+    data class VariantLink(
+        val title: String,
+        val quality: String,
+        val size: String,
+        val server: String,
+        val greenmotorsUrl: String
+    )
+
+    @Serializable
+    data class MoviePayload(
+        val tmdbId: String?,
+        val title: String,
+        val url: String,
+        val variants: List<VariantLink>
+    )
+
+    @Serializable
+    data class TvPayload(
+        val tmdbId: String?,
+        val season: Int,
+        val episode: Int,
+        val title: String,
+        val variants: List<VariantLink>
+    )
+
+    data class ResolvedDirectServer(
+        val name: String,
+        val url: String,
+        val isDirectR2: Boolean = false
+    )
+
     override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = emptyList()
 }
-
-// ============================================================================
-// Internal Serialized Models
-// ============================================================================
-
-@Serializable
-data class VariantLink(
-    val title: String,
-    val quality: String,
-    val size: String,
-    val server: String,
-    val greenmotorsUrl: String
-)
-
-@Serializable
-data class MoviePayload(
-    val tmdbId: String?,
-    val title: String,
-    val url: String,
-    val variants: List<VariantLink>
-)
-
-@Serializable
-data class TvPayload(
-    val tmdbId: String?,
-    val season: Int,
-    val episode: Int,
-    val title: String,
-    val variants: List<VariantLink>
-)
-
-data class ResolvedDirectServer(
-    val name: String,
-    val url: String,
-    val isDirectR2: Boolean = false
-)
 

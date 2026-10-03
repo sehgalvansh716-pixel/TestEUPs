@@ -4,10 +4,110 @@
   "manifestVersion": 1,
   "plugins": [
     {
+      "id": "atlantic",
+      "name": "Atlantic",
+      "version": 2,
+      "versionName": "1.1.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://atlantic.st",
+      "description": "High-speed 1080p HLS multi-server streaming with Helios & Natsuki subs (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.AtlanticPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/atlantic.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "90b0112727840a6bcefcb6b7a94c2efd8ef85bcf7d2c5278ce7edffcb7ab9efd",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "uhdmovies",
+      "name": "UHDMovies (Maintenance)",
+      "version": 2,
+      "versionName": "1.1.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://uhdmovies.my",
+      "description": "4K UHD, HDR, 10Bit HEVC streaming (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.UhdMoviesPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/uhdmovies.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "9ca55e3d6882d3e8a03dd3a60c1da29be4d53a9d9d1444c5f1ab802d0797e9e9",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "moviesleech",
+      "name": "MoviesLeech",
+      "version": 2,
+      "versionName": "1.1.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://moviesleech.club",
+      "description": "Bollywood, Indian cinema, Hollywood, and Web Series streaming with Fast Server G-Drive mirrors (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.MoviesLeechPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/moviesleech.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "595c4b0f792da6ddc6fa4711a23ff76fa5c55d6faf84e6aae6af057abea807a2",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "movy",
+      "name": "Movy",
+      "version": 2,
+      "versionName": "1.1.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://www.movy.sx",
+      "description": "High-speed multi-server streaming with PRNG decrypted CDN mirrors, 4K/1080p HLS, and multi-dub audio (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.MovyPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "e7af889058883c4138c0f4da25c24789f620740060c64276ac04022c4d7da4a5",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
+      "id": "pvrplay",
+      "name": "PvrPlay",
+      "version": 2,
+      "versionName": "1.1.0",
+      "author": "Euthopiar Core",
+      "siteUrl": "https://pvrplay.site",
+      "description": "Direct high-speed multi-audio CDN streaming with Hindi, Tamil, Telugu, and English dubs & multi-language subtitles (Decoupled EUP).",
+      "className": "com.euthopiar.core.provider.PvrPlayPlugin",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/pvrplay.eup",
+      "isBuiltIn": false,
+      "isEnabled": true,
+      "sha256": "1f54b0301cc07585c32bb45af1d130401af1bd7885202753b5d22059cdea4329",
+      "isEup": true,
+      "supportedTypes": [
+        "MOVIE",
+        "SERIES",
+        "ANIME"
+      ]
+    },
+    {
       "id": "cinejoy",
       "name": "Cinejoy",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://cinejoy.pk",
       "description": "High-speed 1080p/4K streaming with automated Wasm request sealing (Decoupled EUP).",
@@ -15,7 +115,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "b6b4fc167385b5ac63758a55281fbec8048548558f4e3a85b36cbc01d586d4ed",
+      "sha256": "b38d581ed3c5045b3bbcb65b8b270e72cc541191d299ddcbc5794865d07e43a0",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -26,8 +126,8 @@
     {
       "id": "aether",
       "name": "Aether",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://aether.ist",
       "description": "Curated multi-provider streaming ecosystem with Helios/Aphrodite mirrors and subtitles (Decoupled EUP).",
@@ -35,7 +135,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "943117a80ff72ec49e4abd79fafae354600ec7f3a5aa306b8a5e3c1e353df8cf",
+      "sha256": "d7b373a203d39033bc465bd5f23ffe48a6589ccbcbfede58ce20abe9317c5670",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -46,8 +146,8 @@
     {
       "id": "1shows",
       "name": "1Shows",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://www.1shows.bz",
       "description": "Direct 4K Remux / 1080p high-speed downloads & streams via MakimaDL wasm engine (Decoupled EUP).",
@@ -55,7 +155,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "7af690ef2b480d22af2eaa188a04791b9478ae30565088ebf261c90b90389f68",
+      "sha256": "47c7a58933bf40852b272b56a2960309f9db63be3e2cb0f4bd25b86a91bc6f3f",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -66,8 +166,8 @@
     {
       "id": "4khdhub",
       "name": "4KHDHub",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://4khdhub.one",
       "description": "High quality 4K UHD, HDR, REMUX, and multi-language streaming with Cloudflare R2 direct servers (Decoupled EUP).",
@@ -75,7 +175,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "20a39ed6bfee30b2524dbb5804dc5eaf2d58e7f6fe1512ecb7042780d3e32acc",
+      "sha256": "10cfe34153c207abdd6047249ab0cca8236dee937b3aea979281ac609677eb22",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
