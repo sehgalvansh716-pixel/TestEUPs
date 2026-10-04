@@ -797,12 +797,12 @@ class CinejoyPlugin(
             }
         } catch (_: Exception) {}
 
-        // Prioritized order: Lisbon (4K/High bitrate HLS), Nebula (Adaptive HLS), Scout, Solara, Riga, Athens
-        val defaultList = listOf("Lisbon", "Nebula", "Scout", "Solara", "Riga", "Athens")
+        // Prioritized order: Nebula (100% verified HLS with multi-quality & seek), Lisbon, Scout, Solara, Riga, Athens
+        val defaultList = listOf("Nebula", "Lisbon", "Scout", "Solara", "Riga", "Athens")
         val combined = if (dynamicList.isNotEmpty()) {
             val sorted = mutableListOf<String>()
-            if (dynamicList.contains("Lisbon")) sorted.add("Lisbon")
             if (dynamicList.contains("Nebula")) sorted.add("Nebula")
+            if (dynamicList.contains("Lisbon")) sorted.add("Lisbon")
             dynamicList.forEach { if (!sorted.contains(it)) sorted.add(it) }
             defaultList.forEach { if (!sorted.contains(it)) sorted.add(it) }
             sorted
@@ -821,9 +821,30 @@ class CinejoyPlugin(
                 .url(url)
                 .header("Range", "bytes=0-1024")
             headers.forEach { (k, v) -> builder.header(k, v) }
-            client.newCall(builder.build()).execute().use { resp ->
-                resp.isSuccessful && (resp.code in 200..299)
+            val resp = client.newCall(builder.build()).execute()
+            if (!resp.isSuccessful || resp.code !in 200..299) {
+                resp.close()
+                return false
             }
+            // Deep probe HLS playlists from cheaptruckrepairs (Lisbon/Solara) to filter out upstream 502 Bad Gateway / 403 Forbidden variants
+            if (url.contains(".m3u8") && url.contains("cheaptruckrepairs.cc")) {
+                val body = resp.body?.string() ?: ""
+                val childUrl = body.lines().firstOrNull { it.trim().startsWith("http") && !it.trim().startsWith("#") && it.contains("video_") }
+                if (childUrl != null) {
+                    val childReq = Request.Builder()
+                        .url(childUrl.trim())
+                        .header("Range", "bytes=0-1024")
+                    headers.forEach { (k, v) -> childReq.header(k, v) }
+                    client.newCall(childReq.build()).execute().use { cResp ->
+                        if (!cResp.isSuccessful || cResp.code !in 200..299) {
+                            return false
+                        }
+                    }
+                }
+            } else {
+                resp.close()
+            }
+            true
         } catch (_: Exception) {
             false
         }
@@ -906,9 +927,9 @@ class CinejoyPlugin(
                         val streamType = sObj["type"]?.jsonPrimitive?.contentOrNull ?: "hls"
                         val isHls = streamType.contains("hls") || playlistUrl.contains(".m3u8") || playlistUrl.contains("/content?v=")
 
-                        // Live probe stream to filter out dead CDN links, while ensuring Solara is preserved so no source is omitted
+                        // Live probe stream to filter out dead CDN links (502 Bad Gateway / 403 Forbidden)
                         val isLive = isStreamLive(playlistUrl, defaultHeaders)
-                        if (!isLive && server != "Solara") {
+                        if (!isLive) {
                             continue
                         }
 
@@ -935,17 +956,17 @@ class CinejoyPlugin(
                             headers = defaultHeaders
                         )
 
-                        if (emittedStreamUrls.add(source.url)) {
-                            send(StreamEmission.SourceFound(source))
-                        }
-
-                        // For Nebula, also parse discrete quality variants from master playlist
+                        // For Nebula, parse and emit discrete 1080p / 720p direct variants first so player auto-starts on 1080p
                         if (server == "Nebula" && isHls) {
                             try {
                                 parseNebulaVariants(playlistUrl, emittedStreamUrls) { variantSource ->
                                     send(StreamEmission.SourceFound(variantSource))
                                 }
                             } catch (_: Exception) {}
+                        }
+
+                        if (emittedStreamUrls.add(source.url)) {
+                            send(StreamEmission.SourceFound(source))
                         }
 
                         val captions = sObj["captions"]?.jsonArray
@@ -1036,8 +1057,11 @@ class CinejoyPlugin(
             }
         }
         val sortedStreams = streamSources.sortedWith(
-            compareByDescending<StreamSource> { it.serverName == "Lisbon" || it.serverName == "Nebula" }
+            compareByDescending<StreamSource> { it.serverName == "Nebula" }
                 .thenByDescending { it.resolutionLabel == "1080p" }
+                .thenByDescending { it.resolutionLabel == "Auto" }
+                .thenByDescending { it.resolutionLabel == "720p" }
+                .thenByDescending { it.serverName == "Lisbon" }
         )
         StreamResult(
             streams = sortedStreams,
