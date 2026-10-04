@@ -903,22 +903,14 @@ class CinejoyPlugin(
                         for (streamElem in streamArr) {
                             val sObj = streamElem.jsonObject
                             val playlistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val isHls = playlistUrl.contains(".m3u8")
-
-                            if (isHls) {
-                                try {
-                                    parseNebulaVariants(playlistUrl, emittedStreamUrls) { variantSource ->
-                                        send(StreamEmission.SourceFound(variantSource))
-                                    }
-                                } catch (_: Exception) {}
-                            }
+                            val isHls = playlistUrl.contains(".m3u8") || playlistUrl.contains("/hls/")
 
                             val nebulaSource = StreamSource(
                                 url = playlistUrl,
                                 serverName = "Nebula",
-                                resolutionLabel = "Auto",
-                                quality = "Nebula (Adaptive Multi-Quality)",
-                                isM3u8 = isHls,
+                                resolutionLabel = "1080p",
+                                quality = "Nebula (1080p FHD Direct)",
+                                isM3u8 = true,
                                 releaseType = AudioReleaseType.ORIGINAL,
                                 headers = defaultHeaders
                             )
@@ -1007,68 +999,6 @@ class CinejoyPlugin(
         }
     }
 
-    private suspend fun parseNebulaVariants(
-        masterUrl: String,
-        emittedUrls: MutableSet<String>,
-        onVariantFound: suspend (StreamSource) -> Unit
-    ) = withContext(Dispatchers.IO) {
-        try {
-            val req = Request.Builder()
-                .url(masterUrl)
-                .header("User-Agent", "Mozilla/5.0")
-                .header("Referer", "https://cinejoy.pk/")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: return@use
-                    val lines = body.lines()
-                    var currentQuality: String? = null
-                    var currentResLabel: String? = null
-                    for (line in lines) {
-                        val trimmed = line.trim()
-                        if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
-                            if (trimmed.contains("RESOLUTION=1920x1080") || trimmed.contains("NAME=\"1080p\"")) {
-                                currentQuality = "Nebula (1080p FHD Direct)"
-                                currentResLabel = "1080p"
-                            } else if (trimmed.contains("RESOLUTION=1280x720") || trimmed.contains("NAME=\"720p\"")) {
-                                currentQuality = "Nebula (720p HD Direct)"
-                                currentResLabel = "720p"
-                            } else if (trimmed.contains("RESOLUTION=3840x2160") || trimmed.contains("NAME=\"4K\"") || trimmed.contains("NAME=\"2160p\"")) {
-                                currentQuality = "Nebula (4K 2160p Direct)"
-                                currentResLabel = "4K"
-                            } else {
-                                currentQuality = null
-                                currentResLabel = null
-                            }
-                        } else if (trimmed.isNotBlank() && !trimmed.startsWith("#") && currentQuality != null) {
-                            val variantUrl = if (trimmed.startsWith("http")) {
-                                trimmed
-                            } else {
-                                val lastSlash = masterUrl.lastIndexOf('/')
-                                masterUrl.substring(0, lastSlash + 1) + trimmed
-                            }
-                            if (emittedUrls.add(variantUrl)) {
-                                onVariantFound(
-                                    StreamSource(
-                                        url = variantUrl,
-                                        serverName = "Nebula",
-                                        resolutionLabel = currentResLabel ?: "HD",
-                                        quality = currentQuality,
-                                        isM3u8 = true,
-                                        releaseType = AudioReleaseType.ORIGINAL,
-                                        headers = defaultHeaders
-                                    )
-                                )
-                            }
-                            currentQuality = null
-                            currentResLabel = null
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
     override suspend fun getStreamLinks(episodeData: String): StreamResult = withContext(Dispatchers.IO) {
         val streamSources = mutableListOf<StreamSource>()
         val subtitleTracks = mutableListOf<SubtitleTrack>()
@@ -1081,9 +1011,6 @@ class CinejoyPlugin(
         }
         val sortedStreams = streamSources.sortedWith(
             compareByDescending<StreamSource> { it.serverName == "Nebula" }
-                .thenByDescending { it.resolutionLabel == "1080p" }
-                .thenByDescending { it.resolutionLabel == "Auto" }
-                .thenByDescending { it.resolutionLabel == "720p" }
                 .thenByDescending { it.serverName == "Lisbon" }
                 .thenByDescending { it.serverName == "Solara" }
         )
