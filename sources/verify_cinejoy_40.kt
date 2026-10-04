@@ -104,18 +104,20 @@ fun main() = runBlocking {
             val subs = streamResult.subtitles
             val hasStreams = streams.isNotEmpty()
 
-            // Verify top stream is live
             var streamLive = false
-            if (hasStreams) {
-                val topStream = streams.first()
+            for (s in streams) {
                 try {
                     val req = Request.Builder()
-                        .url(topStream.url)
+                        .url(s.url)
                         .header("User-Agent", "Mozilla/5.0")
                         .header("Range", "bytes=0-1024")
-                    topStream.headers.forEach { (k, v) -> req.header(k, v) }
-                    client.newCall(req.build()).execute().use { resp ->
-                        streamLive = resp.isSuccessful && resp.code in 200..299
+                    s.headers.forEach { (k, v) -> req.header(k, v) }
+                    val ok = client.newCall(req.build()).execute().use { resp ->
+                        resp.isSuccessful && resp.code in 200..299
+                    }
+                    if (ok) {
+                        streamLive = true
+                        break
                     }
                 } catch (_: Exception) {}
             }
@@ -125,16 +127,19 @@ fun main() = runBlocking {
             val hasDownloads = downloads.isNotEmpty()
 
             var downloadLive = false
-            if (hasDownloads) {
-                val topDownload = downloads.first()
+            for (d in downloads) {
                 try {
                     val req = Request.Builder()
-                        .url(topDownload.url)
+                        .url(d.url)
                         .header("User-Agent", "Mozilla/5.0")
                         .header("Range", "bytes=0-1024")
-                    topDownload.headers.forEach { (k, v) -> req.header(k, v) }
-                    client.newCall(req.build()).execute().use { resp ->
-                        downloadLive = resp.isSuccessful && (resp.code == 200 || resp.code == 206)
+                    d.headers.forEach { (k, v) -> req.header(k, v) }
+                    val ok = client.newCall(req.build()).execute().use { resp ->
+                        resp.isSuccessful && (resp.code == 200 || resp.code == 206)
+                    }
+                    if (ok) {
+                        downloadLive = true
+                        break
                     }
                 } catch (_: Exception) {}
             }

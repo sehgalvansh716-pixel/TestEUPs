@@ -1035,8 +1035,12 @@ class CinejoyPlugin(
                 is StreamEmission.StatusUpdate -> {}
             }
         }
+        val sortedStreams = streamSources.sortedWith(
+            compareByDescending<StreamSource> { it.serverName == "Lisbon" || it.serverName == "Nebula" }
+                .thenByDescending { it.resolutionLabel == "1080p" }
+        )
         StreamResult(
-            streams = streamSources,
+            streams = sortedStreams,
             subtitles = subtitleTracks
         )
     }
@@ -1250,7 +1254,8 @@ class CinejoyPlugin(
         if (downloadOptions.isEmpty()) {
             try {
                 val streamResult = getStreamLinks(episodeData)
-                for (stream in streamResult.streams) {
+                val liveStreams = streamResult.streams.filter { isStreamLive(it.url, it.headers) }
+                for (stream in liveStreams) {
                     val q = if (stream.resolutionLabel != "Auto") stream.resolutionLabel else "1080p FHD"
                     downloadOptions.add(
                         DownloadOption(
@@ -1259,7 +1264,7 @@ class CinejoyPlugin(
                             size = "~1.5 GB",
                             url = stream.url,
                             source = "Cinejoy Direct Gateway (${stream.serverName})",
-                            provider = "Cinejoy",
+                            provider = name,
                             headers = stream.headers
                         )
                     )
