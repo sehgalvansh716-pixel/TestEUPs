@@ -421,9 +421,10 @@ class CinejoyPlugin(
                 val body = resp.body?.string() ?: ""
                 val obj = json.parseToJsonElement(body).jsonObject
 
-                wingTitle = obj["title"]?.jsonPrimitive?.contentOrNull
+                wingTitle = obj["title"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                 wingYear = obj["year"]?.jsonPrimitive?.intOrNull
-                wingSynopsis = obj["description"]?.jsonPrimitive?.contentOrNull
+                wingSynopsis = obj["description"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+                    ?: obj["overview"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
                 wingPoster = obj["poster"]?.jsonPrimitive?.contentOrNull
                 wingRating = obj["imdb_rating"]?.jsonPrimitive?.contentOrNull
                 wingContentRating = obj["content_rating"]?.jsonPrimitive?.contentOrNull
@@ -452,11 +453,11 @@ class CinejoyPlugin(
         // Centralized TMDB Enrichment Bridge for complete v3.0 metadata contract
         val enriched = TmdbBridge.fetchEnrichedDetails(client, tmdbId, isTv, wingTitle ?: mediaItem.title)
 
-        val title = wingTitle ?: enriched?.title ?: mediaItem.title
+        val title = wingTitle?.takeIf { it.isNotBlank() } ?: enriched?.title ?: mediaItem.title
         val poster = enriched?.posterUrl ?: wingPoster ?: mediaItem.posterUrl
         val backdrop = enriched?.backdropUrl ?: wingBackdrop ?: mediaItem.backdropUrl ?: poster
         val year = enriched?.year ?: wingYear ?: mediaItem.year
-        val synopsis = wingSynopsis ?: enriched?.synopsis ?: ""
+        val synopsis = wingSynopsis?.takeIf { it.isNotBlank() } ?: enriched?.synopsis ?: ""
         val genres = wingGenres.ifEmpty { enriched?.genres ?: emptyList() }
         val duration = enriched?.duration ?: wingRuntime
         val rating = wingRating ?: enriched?.rating ?: mediaItem.rating
@@ -780,16 +781,17 @@ class CinejoyPlugin(
         val dynamicList = mutableListOf<String>()
         try {
             val req = newRequestBuilder("https://api.wing.st/servers").build()
-            val resp = client.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string() ?: ""
-                val root = json.parseToJsonElement(body).jsonObject
-                root["servers"]?.jsonArray?.forEach { elem ->
-                    val obj = elem.jsonObject
-                    val sName = obj["name"]?.jsonPrimitive?.contentOrNull
-                    val sStatus = obj["status"]?.jsonPrimitive?.contentOrNull
-                    if (sName != null && (sStatus == null || sStatus == "ok")) {
-                        dynamicList.add(sName)
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    val root = json.parseToJsonElement(body).jsonObject
+                    root["servers"]?.jsonArray?.forEach { elem ->
+                        val obj = elem.jsonObject
+                        val sName = obj["name"]?.jsonPrimitive?.contentOrNull
+                        val sStatus = obj["status"]?.jsonPrimitive?.contentOrNull
+                        if (sName != null && (sStatus == null || sStatus == "ok")) {
+                            dynamicList.add(sName)
+                        }
                     }
                 }
             }
@@ -904,19 +906,22 @@ class CinejoyPlugin(
                         val streamType = sObj["type"]?.jsonPrimitive?.contentOrNull ?: "hls"
                         val isHls = streamType.contains("hls") || playlistUrl.contains(".m3u8") || playlistUrl.contains("/content?v=")
 
-                        // Live probe stream to filter out Cloudflare bot challenges or dead CDN links
-                        if (!isStreamLive(playlistUrl, defaultHeaders)) {
+                        // Live probe stream to filter out dead CDN links, while ensuring Solara is preserved so no source is omitted
+                        val isLive = isStreamLive(playlistUrl, defaultHeaders)
+                        if (!isLive && server != "Solara") {
                             continue
                         }
 
                         val resolutionLabel = when (server) {
                             "Lisbon" -> "1080p"
                             "Nebula" -> "Auto"
+                            "Solara" -> "HD"
                             else -> "HD"
                         }
                         val qualityLabel = when (server) {
                             "Lisbon" -> "Lisbon (1080p High Bitrate)"
                             "Nebula" -> "Nebula (Adaptive Multi-Quality)"
+                            "Solara" -> "Solara (Direct HLS)"
                             else -> "$server (Direct)"
                         }
 
@@ -969,50 +974,51 @@ class CinejoyPlugin(
                 .header("User-Agent", "Mozilla/5.0")
                 .header("Referer", "https://cinejoy.pk/")
                 .build()
-            val resp = client.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string() ?: return@withContext
-                val lines = body.lines()
-                var currentQuality: String? = null
-                var currentResLabel: String? = null
-                for (line in lines) {
-                    val trimmed = line.trim()
-                    if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
-                        if (trimmed.contains("RESOLUTION=1920x1080") || trimmed.contains("NAME=\"1080p\"")) {
-                            currentQuality = "Nebula (1080p FHD Direct)"
-                            currentResLabel = "1080p"
-                        } else if (trimmed.contains("RESOLUTION=1280x720") || trimmed.contains("NAME=\"720p\"")) {
-                            currentQuality = "Nebula (720p HD Direct)"
-                            currentResLabel = "720p"
-                        } else if (trimmed.contains("RESOLUTION=3840x2160") || trimmed.contains("NAME=\"4K\"") || trimmed.contains("NAME=\"2160p\"")) {
-                            currentQuality = "Nebula (4K 2160p Direct)"
-                            currentResLabel = "4K"
-                        } else {
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: return@use
+                    val lines = body.lines()
+                    var currentQuality: String? = null
+                    var currentResLabel: String? = null
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
+                            if (trimmed.contains("RESOLUTION=1920x1080") || trimmed.contains("NAME=\"1080p\"")) {
+                                currentQuality = "Nebula (1080p FHD Direct)"
+                                currentResLabel = "1080p"
+                            } else if (trimmed.contains("RESOLUTION=1280x720") || trimmed.contains("NAME=\"720p\"")) {
+                                currentQuality = "Nebula (720p HD Direct)"
+                                currentResLabel = "720p"
+                            } else if (trimmed.contains("RESOLUTION=3840x2160") || trimmed.contains("NAME=\"4K\"") || trimmed.contains("NAME=\"2160p\"")) {
+                                currentQuality = "Nebula (4K 2160p Direct)"
+                                currentResLabel = "4K"
+                            } else {
+                                currentQuality = null
+                                currentResLabel = null
+                            }
+                        } else if (trimmed.isNotBlank() && !trimmed.startsWith("#") && currentQuality != null) {
+                            val variantUrl = if (trimmed.startsWith("http")) {
+                                trimmed
+                            } else {
+                                val lastSlash = masterUrl.lastIndexOf('/')
+                                masterUrl.substring(0, lastSlash + 1) + trimmed
+                            }
+                            if (emittedUrls.add(variantUrl)) {
+                                onVariantFound(
+                                    StreamSource(
+                                        url = variantUrl,
+                                        serverName = "Nebula",
+                                        resolutionLabel = currentResLabel ?: "HD",
+                                        quality = currentQuality,
+                                        isM3u8 = true,
+                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        headers = defaultHeaders
+                                    )
+                                )
+                            }
                             currentQuality = null
                             currentResLabel = null
                         }
-                    } else if (trimmed.isNotBlank() && !trimmed.startsWith("#") && currentQuality != null) {
-                        val variantUrl = if (trimmed.startsWith("http")) {
-                            trimmed
-                        } else {
-                            val lastSlash = masterUrl.lastIndexOf('/')
-                            masterUrl.substring(0, lastSlash + 1) + trimmed
-                        }
-                        if (emittedUrls.add(variantUrl)) {
-                            onVariantFound(
-                                StreamSource(
-                                    url = variantUrl,
-                                    serverName = "Nebula",
-                                    resolutionLabel = currentResLabel ?: "HD",
-                                    quality = currentQuality,
-                                    isM3u8 = true,
-                                    releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = defaultHeaders
-                                )
-                            )
-                        }
-                        currentQuality = null
-                        currentResLabel = null
                     }
                 }
             }
@@ -1052,23 +1058,24 @@ class CinejoyPlugin(
                 "https://subs.wing.st/subtitles?type=movie&tmdb=$tmdbId"
             }
             val wingReq = newRequestBuilder(wingSubUrl).build()
-            val wingResp = client.newCall(wingReq).execute()
-            if (wingResp.isSuccessful) {
-                val body = wingResp.body?.string() ?: ""
-                val root = json.parseToJsonElement(body).jsonObject
-                val subsArr = root["subtitles"]?.jsonArray
-                if (subsArr != null) {
-                    val langCounts = mutableMapOf<String, Int>()
-                    for (elem in subsArr) {
-                        val obj = elem.jsonObject
-                        val sUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                        val langCode = obj["language"]?.jsonPrimitive?.contentOrNull ?: "en"
-                        val langName = languageCodeToName(langCode)
-                        val count = langCounts.getOrDefault(langName, 0)
-                        if (count < 2 && seenUrls.add(sUrl)) {
-                            langCounts[langName] = count + 1
-                            val label = if (count == 0) langName else "$langName (Alt)"
-                            tracks.add(SubtitleTrack(url = sUrl, language = label))
+            client.newCall(wingReq).execute().use { wingResp ->
+                if (wingResp.isSuccessful) {
+                    val body = wingResp.body?.string() ?: ""
+                    val root = json.parseToJsonElement(body).jsonObject
+                    val subsArr = root["subtitles"]?.jsonArray
+                    if (subsArr != null) {
+                        val langCounts = mutableMapOf<String, Int>()
+                        for (elem in subsArr) {
+                            val obj = elem.jsonObject
+                            val sUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val langCode = obj["language"]?.jsonPrimitive?.contentOrNull ?: "en"
+                            val langName = languageCodeToName(langCode)
+                            val count = langCounts.getOrDefault(langName, 0)
+                            if (count < 2 && seenUrls.add(sUrl)) {
+                                langCounts[langName] = count + 1
+                                val label = if (count == 0) langName else "$langName (Alt)"
+                                tracks.add(SubtitleTrack(url = sUrl, language = label))
+                            }
                         }
                     }
                 }
@@ -1078,11 +1085,12 @@ class CinejoyPlugin(
         // 2. OpenSubtitles bridge via IMDB id
         try {
             val infoReq = newRequestBuilder("https://api.wing.st/info?type=$type&tmdb=$tmdbId").build()
-            val infoResp = client.newCall(infoReq).execute()
-            val imdbId = if (infoResp.isSuccessful) {
-                val b = infoResp.body?.string() ?: ""
-                json.parseToJsonElement(b).jsonObject["imdb_id"]?.jsonPrimitive?.contentOrNull
-            } else null
+            val imdbId = client.newCall(infoReq).execute().use { infoResp ->
+                if (infoResp.isSuccessful) {
+                    val b = infoResp.body?.string() ?: ""
+                    json.parseToJsonElement(b).jsonObject["imdb_id"]?.jsonPrimitive?.contentOrNull
+                } else null
+            }
 
             if (imdbId != null && imdbId.startsWith("tt")) {
                 val subUrl = if (type == "tv" && season != null && episode != null) {
@@ -1095,21 +1103,22 @@ class CinejoyPlugin(
                     .url(subUrl)
                     .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
                     .build()
-                val subsResp = client.newCall(subsReq).execute()
-                if (subsResp.isSuccessful) {
-                    val body = subsResp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(body).jsonObject
-                    val subsArr = root["subtitles"]?.jsonArray
-                    if (subsArr != null) {
-                        for (elem in subsArr) {
-                            val obj = elem.jsonObject
-                            val sUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val langCode = obj["lang"]?.jsonPrimitive?.contentOrNull ?: "eng"
-                            val langName = languageCodeToName(langCode)
-                            val countForLang = tracks.count { it.language.startsWith(langName) }
-                            if (countForLang < 3 && seenUrls.add(sUrl)) {
-                                val label = if (countForLang == 0) langName else "$langName (${countForLang + 1})"
-                                tracks.add(SubtitleTrack(url = sUrl, language = label))
+                client.newCall(subsReq).execute().use { subsResp ->
+                    if (subsResp.isSuccessful) {
+                        val body = subsResp.body?.string() ?: ""
+                        val root = json.parseToJsonElement(body).jsonObject
+                        val subsArr = root["subtitles"]?.jsonArray
+                        if (subsArr != null) {
+                            for (elem in subsArr) {
+                                val obj = elem.jsonObject
+                                val sUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                                val langCode = obj["lang"]?.jsonPrimitive?.contentOrNull ?: "eng"
+                                val langName = languageCodeToName(langCode)
+                                val countForLang = tracks.count { it.language.startsWith(langName) }
+                                if (countForLang < 3 && seenUrls.add(sUrl)) {
+                                    val label = if (countForLang == 0) langName else "$langName (${countForLang + 1})"
+                                    tracks.add(SubtitleTrack(url = sUrl, language = label))
+                                }
                             }
                         }
                     }
@@ -1178,54 +1187,55 @@ class CinejoyPlugin(
 
         try {
             val req = newRequestBuilder(url).build()
-            val resp = client.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string() ?: ""
-                val root = json.parseToJsonElement(body).jsonObject
-                val linksArr = root["links"]?.jsonArray
-                if (linksArr != null) {
-                    for (elem in linksArr) {
-                        val obj = elem.jsonObject
-                        val linkUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                        val source = obj["source"]?.jsonPrimitive?.contentOrNull ?: "Direct Server"
-                        val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: source
-                        val qualityInt = obj["quality"]?.jsonPrimitive?.intOrNull
-                        val sizeStr = obj["size"]?.jsonPrimitive?.contentOrNull ?: "Unknown Size"
-                        val providerStr = obj["provider"]?.jsonPrimitive?.contentOrNull
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    val root = json.parseToJsonElement(body).jsonObject
+                    val linksArr = root["links"]?.jsonArray
+                    if (linksArr != null) {
+                        for (elem in linksArr) {
+                            val obj = elem.jsonObject
+                            val linkUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val source = obj["source"]?.jsonPrimitive?.contentOrNull ?: "Direct Server"
+                            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: source
+                            val qualityInt = obj["quality"]?.jsonPrimitive?.intOrNull
+                            val sizeStr = obj["size"]?.jsonPrimitive?.contentOrNull ?: "Unknown Size"
+                            val providerStr = obj["provider"]?.jsonPrimitive?.contentOrNull
 
-                        val qualityLabel = when (qualityInt) {
-                            2160 -> "4K 2160p"
-                            1080 -> "1080p FHD"
-                            720 -> "720p HD"
-                            480 -> "480p SD"
-                            null -> "HD"
-                            else -> "${qualityInt}p"
-                        }
+                            val qualityLabel = when (qualityInt) {
+                                2160 -> "4K 2160p"
+                                1080 -> "1080p FHD"
+                                720 -> "720p HD"
+                                480 -> "480p SD"
+                                null -> "HD"
+                                else -> "${qualityInt}p"
+                            }
 
-                        // Filter out known broken/quota-exceeded Google Drive workers & 403 onedrive proxies
-                        val isDeadWorker = linkUrl.contains(".workers.dev", ignoreCase = true) ||
-                                linkUrl.contains("111477.xyz", ignoreCase = true)
+                            // Filter out known broken/quota-exceeded Google Drive workers & 403 onedrive proxies
+                            val isDeadWorker = linkUrl.contains(".workers.dev", ignoreCase = true) ||
+                                    linkUrl.contains("111477.xyz", ignoreCase = true)
 
-                        if (!isDeadWorker) {
-                            val cleanUrl = sanitizeDownloadUrl(linkUrl)
+                            if (!isDeadWorker) {
+                                val cleanUrl = sanitizeDownloadUrl(linkUrl)
 
-                            // Validate that direct link is live (HTTP 200 or 206)
-                            if (isDownloadLive(cleanUrl)) {
-                                downloadOptions.add(
-                                    DownloadOption(
-                                        title = name,
-                                        quality = qualityLabel,
-                                        size = sizeStr,
-                                        url = cleanUrl,
-                                        source = source,
-                                        provider = providerStr,
-                                        headers = mapOf(
-                                            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                                            "Referer" to "https://cinejoy.pk/",
-                                            "Origin" to "https://cinejoy.pk"
+                                // Validate that direct link is live (HTTP 200 or 206)
+                                if (isDownloadLive(cleanUrl)) {
+                                    downloadOptions.add(
+                                        DownloadOption(
+                                            title = name,
+                                            quality = qualityLabel,
+                                            size = sizeStr,
+                                            url = cleanUrl,
+                                            source = source,
+                                            provider = providerStr,
+                                            headers = mapOf(
+                                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                                                "Referer" to "https://cinejoy.pk/",
+                                                "Origin" to "https://cinejoy.pk"
+                                            )
                                         )
                                     )
-                                )
+                                }
                             }
                         }
                     }
