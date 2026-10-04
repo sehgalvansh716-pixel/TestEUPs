@@ -822,29 +822,9 @@ class CinejoyPlugin(
                 .header("Range", "bytes=0-1024")
             headers.forEach { (k, v) -> builder.header(k, v) }
             val resp = client.newCall(builder.build()).execute()
-            if (!resp.isSuccessful || resp.code !in 200..299) {
-                resp.close()
-                return false
+            resp.use {
+                it.isSuccessful && (it.code in 200..299)
             }
-            // Deep probe HLS playlists from cheaptruckrepairs (Lisbon/Solara) to filter out upstream 502 Bad Gateway / 403 Forbidden variants
-            if (url.contains(".m3u8") && url.contains("cheaptruckrepairs.cc")) {
-                val body = resp.body?.string() ?: ""
-                val childUrl = body.lines().firstOrNull { it.trim().startsWith("http") && !it.trim().startsWith("#") && it.contains("video_") }
-                if (childUrl != null) {
-                    val childReq = Request.Builder()
-                        .url(childUrl.trim())
-                        .header("Range", "bytes=0-1024")
-                    headers.forEach { (k, v) -> childReq.header(k, v) }
-                    client.newCall(childReq.build()).execute().use { cResp ->
-                        if (!cResp.isSuccessful || cResp.code !in 200..299) {
-                            return false
-                        }
-                    }
-                }
-            } else {
-                resp.close()
-            }
-            true
         } catch (_: Exception) {
             false
         }
@@ -902,8 +882,68 @@ class CinejoyPlugin(
             } catch (_: Exception) {}
         }
 
-        // 2. Concurrently decrypt streams from all available servers and send progressively
-        servers.forEach { server ->
+        // 2. Fetch and emit Nebula FIRST so player auto-starts instantly on 1080p FHD Direct with zero buffering
+        if (servers.contains("Nebula")) {
+            try {
+                val nebulaJson = withTimeoutOrNull(5000L) {
+                    CinejoyWasmEngine.requestStream(
+                        client = client,
+                        server = "Nebula",
+                        type = type,
+                        tmdbId = tmdbId,
+                        season = season,
+                        episode = episode
+                    )
+                }
+                if (nebulaJson != null) {
+                    val root = json.parseToJsonElement(nebulaJson).jsonObject
+                    val dataObj = root["data"]?.jsonObject
+                    val streamArr = dataObj?.get("stream")?.jsonArray
+                    if (streamArr != null) {
+                        for (streamElem in streamArr) {
+                            val sObj = streamElem.jsonObject
+                            val playlistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val isHls = playlistUrl.contains(".m3u8")
+
+                            if (isHls) {
+                                try {
+                                    parseNebulaVariants(playlistUrl, emittedStreamUrls) { variantSource ->
+                                        send(StreamEmission.SourceFound(variantSource))
+                                    }
+                                } catch (_: Exception) {}
+                            }
+
+                            val nebulaSource = StreamSource(
+                                url = playlistUrl,
+                                serverName = "Nebula",
+                                resolutionLabel = "Auto",
+                                quality = "Nebula (Adaptive Multi-Quality)",
+                                isM3u8 = isHls,
+                                releaseType = AudioReleaseType.ORIGINAL,
+                                headers = defaultHeaders
+                            )
+                            if (emittedStreamUrls.add(nebulaSource.url)) {
+                                send(StreamEmission.SourceFound(nebulaSource))
+                            }
+
+                            val captions = sObj["captions"]?.jsonArray
+                            captions?.forEach { capElem ->
+                                val capObj = capElem.jsonObject
+                                val capUrl = capObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                                val lang = capObj["language"]?.jsonPrimitive?.contentOrNull ?: "English"
+                                if (emittedSubUrls.add(capUrl)) {
+                                    send(StreamEmission.SubtitleFound(SubtitleTrack(url = capUrl, language = lang)))
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Concurrently fetch secondary mirrors (Lisbon, Solara, Scout, etc.) so NO SOURCE IS OMITTED
+        val secondaryServers = servers.filter { it != "Nebula" }
+        secondaryServers.forEach { server ->
             launch {
                 try {
                     val decryptedJson = withTimeoutOrNull(8000L) {
@@ -927,21 +967,13 @@ class CinejoyPlugin(
                         val streamType = sObj["type"]?.jsonPrimitive?.contentOrNull ?: "hls"
                         val isHls = streamType.contains("hls") || playlistUrl.contains(".m3u8") || playlistUrl.contains("/content?v=")
 
-                        // Live probe stream to filter out dead CDN links (502 Bad Gateway / 403 Forbidden)
-                        val isLive = isStreamLive(playlistUrl, defaultHeaders)
-                        if (!isLive) {
-                            continue
-                        }
-
                         val resolutionLabel = when (server) {
                             "Lisbon" -> "1080p"
-                            "Nebula" -> "Auto"
                             "Solara" -> "HD"
                             else -> "HD"
                         }
                         val qualityLabel = when (server) {
                             "Lisbon" -> "Lisbon (1080p High Bitrate)"
-                            "Nebula" -> "Nebula (Adaptive Multi-Quality)"
                             "Solara" -> "Solara (Direct HLS)"
                             else -> "$server (Direct)"
                         }
@@ -955,15 +987,6 @@ class CinejoyPlugin(
                             releaseType = AudioReleaseType.ORIGINAL,
                             headers = defaultHeaders
                         )
-
-                        // For Nebula, parse and emit discrete 1080p / 720p direct variants first so player auto-starts on 1080p
-                        if (server == "Nebula" && isHls) {
-                            try {
-                                parseNebulaVariants(playlistUrl, emittedStreamUrls) { variantSource ->
-                                    send(StreamEmission.SourceFound(variantSource))
-                                }
-                            } catch (_: Exception) {}
-                        }
 
                         if (emittedStreamUrls.add(source.url)) {
                             send(StreamEmission.SourceFound(source))
@@ -1062,6 +1085,7 @@ class CinejoyPlugin(
                 .thenByDescending { it.resolutionLabel == "Auto" }
                 .thenByDescending { it.resolutionLabel == "720p" }
                 .thenByDescending { it.serverName == "Lisbon" }
+                .thenByDescending { it.serverName == "Solara" }
         )
         StreamResult(
             streams = sortedStreams,
