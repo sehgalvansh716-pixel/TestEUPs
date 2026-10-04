@@ -885,7 +885,8 @@ class CinejoyPlugin(
         // 2. Fetch and emit Nebula FIRST so player auto-starts instantly on 1080p FHD Direct with zero buffering
         if (servers.contains("Nebula")) {
             try {
-                val nebulaJson = withTimeoutOrNull(5000L) {
+                android.util.Log.d("CinejoyPlugin", "Requesting Nebula stream for $tmdbId...")
+                val nebulaJson = withTimeoutOrNull(15000L) {
                     CinejoyWasmEngine.requestStream(
                         client = client,
                         server = "Nebula",
@@ -915,6 +916,7 @@ class CinejoyPlugin(
                                 headers = defaultHeaders
                             )
                             if (emittedStreamUrls.add(nebulaSource.url)) {
+                                android.util.Log.d("CinejoyPlugin", "Emitting Nebula source: ${nebulaSource.url}")
                                 send(StreamEmission.SourceFound(nebulaSource))
                             }
 
@@ -930,7 +932,9 @@ class CinejoyPlugin(
                         }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                android.util.Log.e("CinejoyPlugin", "Error requesting Nebula: ${e.message}", e)
+            }
         }
 
         // 3. Concurrently fetch secondary mirrors (Lisbon, Scout, etc.) - Solara filtered due to Cloudflare 403
@@ -938,7 +942,8 @@ class CinejoyPlugin(
         secondaryServers.forEach { server ->
             launch {
                 try {
-                    val decryptedJson = withTimeoutOrNull(8000L) {
+                    android.util.Log.d("CinejoyPlugin", "Requesting mirror $server for $tmdbId...")
+                    val decryptedJson = withTimeoutOrNull(20000L) {
                         CinejoyWasmEngine.requestStream(
                             client = client,
                             server = server,
@@ -959,11 +964,7 @@ class CinejoyPlugin(
                         val streamType = sObj["type"]?.jsonPrimitive?.contentOrNull ?: "hls"
                         val isHls = streamType.contains("hls") || rawPlaylistUrl.contains(".m3u8") || rawPlaylistUrl.contains("/content?v=")
 
-                        val effectiveUrl = if (server == "Lisbon") {
-                            sanitizeLisbonPlaylist(rawPlaylistUrl)
-                        } else {
-                            rawPlaylistUrl
-                        }
+                        val effectiveUrl = rawPlaylistUrl
 
                         val resolutionLabel = when (server) {
                             "Lisbon" -> "1080p"
