@@ -13,39 +13,29 @@ import kotlinx.serialization.json.jsonPrimitive
 fun main() = runBlocking {
     val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    println("Requesting fresh Solara stream for Inception (27205)...")
-    val res = CinejoyWasmEngine.requestStream(
-        client = client,
-        server = "Solara",
-        type = "movie",
-        tmdbId = "27205"
-    )
-    println("Response raw: $res")
-
+    println("Requesting Lisbon for Interstellar (157336)...")
+    val res = CinejoyWasmEngine.requestStream(client, "Lisbon", "movie", "157336")
+    println("Response: $res")
     if (res != null) {
         val json = Json { ignoreUnknownKeys = true }
         val root = json.parseToJsonElement(res).jsonObject
         val dataObj = root["data"]?.jsonObject
         val streamArr = dataObj?.get("stream")?.jsonArray
         val url = streamArr?.firstOrNull()?.jsonObject?.get("playlist")?.jsonPrimitive?.content
-        println("Testing playlist URL immediately: $url")
-
+        println("Lisbon playlist: $url")
         if (url != null) {
             val req = Request.Builder()
                 .url(url)
                 .header("Referer", "https://cinejoy.pk/")
-                .header("Origin", "https://cinejoy.pk")
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                .header("User-Agent", "Mozilla/5.0")
                 .build()
-
             client.newCall(req).execute().use { resp ->
-                println("HTTP Code: ${resp.code}")
-                println("Headers: ${resp.headers}")
-                val body = resp.body?.string()?.take(500)
-                println("Body: $body")
+                println("Master code: ${resp.code}")
+                val body = resp.body?.string() ?: ""
+                println("Master snippet:\n${body.take(400)}")
             }
         }
     }

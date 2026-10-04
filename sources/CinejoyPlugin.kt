@@ -933,8 +933,8 @@ class CinejoyPlugin(
             } catch (_: Exception) {}
         }
 
-        // 3. Concurrently fetch secondary mirrors (Lisbon, Solara, Scout, etc.) so NO SOURCE IS OMITTED
-        val secondaryServers = servers.filter { it != "Nebula" }
+        // 3. Concurrently fetch secondary mirrors (Lisbon, Scout, etc.) - Solara filtered due to Cloudflare 403
+        val secondaryServers = servers.filter { it != "Nebula" && it != "Solara" }
         secondaryServers.forEach { server ->
             launch {
                 try {
@@ -955,23 +955,27 @@ class CinejoyPlugin(
 
                     for (streamElem in streamArr) {
                         val sObj = streamElem.jsonObject
-                        val playlistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val rawPlaylistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
                         val streamType = sObj["type"]?.jsonPrimitive?.contentOrNull ?: "hls"
-                        val isHls = streamType.contains("hls") || playlistUrl.contains(".m3u8") || playlistUrl.contains("/content?v=")
+                        val isHls = streamType.contains("hls") || rawPlaylistUrl.contains(".m3u8") || rawPlaylistUrl.contains("/content?v=")
+
+                        val effectiveUrl = if (server == "Lisbon") {
+                            sanitizeLisbonPlaylist(rawPlaylistUrl)
+                        } else {
+                            rawPlaylistUrl
+                        }
 
                         val resolutionLabel = when (server) {
                             "Lisbon" -> "1080p"
-                            "Solara" -> "HD"
                             else -> "HD"
                         }
                         val qualityLabel = when (server) {
                             "Lisbon" -> "Lisbon (1080p High Bitrate)"
-                            "Solara" -> "Solara (Direct HLS)"
                             else -> "$server (Direct)"
                         }
 
                         val source = StreamSource(
-                            url = playlistUrl,
+                            url = effectiveUrl,
                             serverName = server,
                             resolutionLabel = resolutionLabel,
                             quality = qualityLabel,
@@ -996,6 +1000,48 @@ class CinejoyPlugin(
                     }
                 } catch (_: Exception) {}
             }
+        }
+    }
+
+    private fun sanitizeLisbonPlaylist(rawUrl: String): String {
+        return try {
+            val req = Request.Builder()
+                .url(rawUrl)
+                .header("Referer", "https://cinejoy.pk/")
+                .header("Origin", "https://cinejoy.pk")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) return rawUrl
+            val body = resp.body?.string() ?: return rawUrl
+            if (!body.contains("4k", ignoreCase = true) && !body.contains("3840x2160")) return rawUrl
+
+            // Filter out 4K variant which returns upstream HTTP 502 Bad Gateway
+            val lines = body.lines()
+            val filteredLines = mutableListOf<String>()
+            var skipNextUrl = false
+            for (line in lines) {
+                val trimmed = line.trim()
+                if (trimmed.contains("4K", ignoreCase = true) || trimmed.contains("3840x2160")) {
+                    if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
+                        skipNextUrl = true
+                    }
+                    continue
+                }
+                if (skipNextUrl && !trimmed.startsWith("#") && trimmed.isNotBlank()) {
+                    skipNextUrl = false
+                    continue
+                }
+                filteredLines.add(line)
+            }
+
+            val sanitizedContent = filteredLines.joinToString("\n")
+            val tempFile = java.io.File.createTempFile("lisbon_", ".m3u8")
+            tempFile.deleteOnExit()
+            tempFile.writeText(sanitizedContent)
+            tempFile.absolutePath
+        } catch (_: Exception) {
+            rawUrl
         }
     }
 
