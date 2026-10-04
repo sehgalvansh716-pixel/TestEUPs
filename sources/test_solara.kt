@@ -16,27 +16,33 @@ fun main() = runBlocking {
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    println("Requesting Lisbon for Interstellar (157336)...")
-    val res = CinejoyWasmEngine.requestStream(client, "Lisbon", "movie", "157336")
-    println("Response: $res")
-    if (res != null) {
-        val json = Json { ignoreUnknownKeys = true }
-        val root = json.parseToJsonElement(res).jsonObject
-        val dataObj = root["data"]?.jsonObject
-        val streamArr = dataObj?.get("stream")?.jsonArray
-        val url = streamArr?.firstOrNull()?.jsonObject?.get("playlist")?.jsonPrimitive?.content
-        println("Lisbon playlist: $url")
-        if (url != null) {
-            val req = Request.Builder()
-                .url(url)
-                .header("Referer", "https://cinejoy.pk/")
-                .header("User-Agent", "Mozilla/5.0")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                println("Master code: ${resp.code}")
-                val body = resp.body?.string() ?: ""
-                println("Master snippet:\n${body.take(400)}")
+    val servers = listOf("Nebula", "Lisbon", "Scout", "Solara", "Riga", "Athens")
+    println("=== Testing servers for Interstellar (movie: 157336) ===")
+    for (server in servers) {
+        val res = CinejoyWasmEngine.requestStream(client, server, "movie", "157336")
+        if (res != null) {
+            val json = Json { ignoreUnknownKeys = true }
+            val root = json.parseToJsonElement(res).jsonObject
+            val dataObj = root["data"]?.jsonObject
+            val streamArr = dataObj?.get("stream")?.jsonArray
+            val url = streamArr?.firstOrNull()?.jsonObject?.get("playlist")?.jsonPrimitive?.content
+            println("Server [$server]: playlist=$url")
+            if (url != null) {
+                try {
+                    val req = Request.Builder()
+                        .url(url)
+                        .header("Referer", "https://cinejoy.pk/")
+                        .header("Origin", "https://cinejoy.pk")
+                        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+                        .build()
+                    val code = client.newCall(req).execute().use { it.code }
+                    println("  -> HTTP status: $code")
+                } catch (e: Exception) {
+                    println("  -> Fetch error: ${e.message}")
+                }
             }
+        } else {
+            println("Server [$server]: returned null")
         }
     }
 }

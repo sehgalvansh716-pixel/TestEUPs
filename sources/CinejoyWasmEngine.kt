@@ -14,7 +14,6 @@ import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import android.util.Log
 
 /**
  * Headless WebAssembly cryptographic engine for Cinejoy (wing.st lumen-gate-v2 protocol).
@@ -81,7 +80,6 @@ object CinejoyWasmEngine {
         episode: Int? = null
     ): String? = withContext(Dispatchers.IO) {
         try {
-            Log.d("CinejoyWasmEngine", "requestStream starting: server=$server type=$type tmdb=$tmdbId")
             val module = getOrLoadModule(client)
             val instance = Instance.builder(module).build()
 
@@ -123,7 +121,6 @@ object CinejoyWasmEngine {
                 dealloc.apply(t.toLong(), plaintextBytes.size.toLong())
                 dealloc.apply(m.toLong(), randomBytes.size.toLong())
                 dealloc.apply(n.toLong(), maxLen.toLong())
-                Log.e("CinejoyWasmEngine", "seal_request output too small: $outLen for $server")
                 return@withContext null
             }
 
@@ -151,13 +148,11 @@ object CinejoyWasmEngine {
 
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
-                Log.e("CinejoyWasmEngine", "Gateway returned HTTP ${response.code} for $server")
                 return@withContext null
             }
 
             val encryptedResp = response.body?.bytes() ?: return@withContext null
             if (encryptedResp.size < 28) {
-                Log.e("CinejoyWasmEngine", "Gateway response too short: ${encryptedResp.size}")
                 return@withContext null
             }
 
@@ -181,10 +176,8 @@ object CinejoyWasmEngine {
 
             val decryptedBytes = cipher.doFinal(ciphertextWithTag)
             val decryptedStr = String(decryptedBytes, Charsets.UTF_8)
-            Log.d("CinejoyWasmEngine", "Successfully decrypted stream for $server: ${decryptedStr.take(100)}")
             decryptedStr
         } catch (e: Throwable) {
-            Log.e("CinejoyWasmEngine", "Exception in requestStream for $server: ${e.message}", e)
             null
         }
     }

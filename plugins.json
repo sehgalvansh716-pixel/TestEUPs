@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/atlantic.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "a74ad907dd48132a0620538beb4befe1b46cf771f445c394cd1dfc211abf412d",
+      "sha256": "e4968f9574efbca094d63b944c2a32a6e2edebe19c32a163ca8a4602ec3e3b90",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -35,7 +35,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/uhdmovies.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "a1ca85dd51e508a33b757d8db8f091367cf4e91f23d9430233e197dbb1533d30",
+      "sha256": "1e024e731ba0f887f616ed290b287cf6f8717daad47a88b6265515ff23b0e74e",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -55,7 +55,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/moviesleech.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "287b45e88fb8ca941a73c33b700c9056e08c42733417af35487964170a4ea310",
+      "sha256": "bf7ddd4574a9fdc4600f2a6fdab9b4ef0016ff6492b35036d84c18d4ad8c5f26",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -75,7 +75,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "2d4157454e440082d4916b7565475b6f35dd5de08318fbf8b1a11e980b6f7541",
+      "sha256": "8508ae243a339f01090164b0d44eede91c3c256e473cacefab645db21151c000",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -95,7 +95,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/pvrplay.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "7923e16c205371fec8680981515ba207ae90fa889d6aaf38d88ae264f4d5723f",
+      "sha256": "8afc75a2dd959a21e408474f1e42c4a258a0cdf418272dea09d50b9e82d462ea",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -106,16 +106,16 @@
     {
       "id": "cinejoy",
       "name": "Cinejoy",
-      "version": 7,
-      "versionName": "1.2.4",
+      "version": 8,
+      "versionName": "1.2.5",
       "author": "Euthopiar Core",
       "siteUrl": "https://cinejoy.pk",
-      "description": "High-speed multi-server streaming with verified Nebula 1080p master HLS auto-start, sanitized Lisbon mirror, R2 downloads & full subtitles (Decoupled EUP).",
+      "description": "High-speed multi-server streaming with verified Nebula 1080p master HLS auto-start, Lisbon high-bitrate mirror, Solara Cloudflare resolver, R2 downloads & SubDL subtitles (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.CinejoyPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "b9bc2eb58572acdd6e4929e7cdba4b0844eb5b5c8ce20bc934379350e3a2f0d7",
+      "sha256": "29a80e3ff031211df0f68fdfdf0c030f20e41135e231c71022889834f66597da",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -135,7 +135,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "521222df4e6e9548b84b35baffddaec4076cfcec696014a15e257821b793f04f",
+      "sha256": "544c3ae7b0bd48ba3c3bb7cfd831c768edf4f0e076d43a4ec2d31ab2b2ff8e85",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -155,7 +155,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "0d5d6611088b6c5dedb03ce2b6bdaf7cda2a94f0a3eb5a528c8a79dd434ebdf9",
+      "sha256": "798ecc0a96c51342861dc6b855d0cdaadcd0bb68cff3289daec599762fe290c4",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -175,7 +175,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "0c4468f65b646c39a1b6bb6a18b4ae3fc7f42225b7832e9b95a0742931276d19",
+      "sha256": "ea2db00a8474d7b18275d0dfe7c1ac1a30da6017954b0cb1dcbe5ebfc972164f",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
