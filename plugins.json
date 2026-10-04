@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/atlantic.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "0cbd1015faa4621d5c4638c1faef664b81684772f44275c769959d96d8943219",
+      "sha256": "2f6ec1525add45949403a4d18d5fe20fbc429baab08932a2211c568a2535d571",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -35,7 +35,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/uhdmovies.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "2aa054005a6a01244c63e47502e757277a2800af6dbb2e45af3bd6227bb9c27c",
+      "sha256": "f76be5bd774897c08c5209f98a2ab07886885a232c9ab901b51b310a5573e1aa",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -55,7 +55,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/moviesleech.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "88c0c54f774f988d46d5b7270789342b92d3299dfd0b5fc260b8418100c02ac5",
+      "sha256": "51bfc7a7bc637eee557ee03c416ad86b32bda1a72c41661402d2baba3218e117",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -75,7 +75,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "ed37877c29cfb9aee0a21ca81d446d48d79677efe0da05dbdf4c908f3661c95c",
+      "sha256": "753e036023b496d1040efa0a51d2e93140d45151c77e90185f784d952ebb5448",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -95,7 +95,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/pvrplay.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "a4a7166155c91755de1069de1371ff8e0f88f2ea107ef230ab25c051ed682aae",
+      "sha256": "557d2b7dfc8869b0cc749cc54d54ffe627ba61a16e58172f7cfc8bc51559bc5b",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -115,7 +115,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "a06115eb2d87ffa7a59af5189695d5a54700aca452341019dd4307db43ca4ca5",
+      "sha256": "8dd28ab338f5f35d9b1e49cba4ee33bbb9b5b3309377dadcaf666b0891b7c652",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -135,7 +135,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "e751d685dc17decf72d98d016de4ab4919510bee0eddccbaa2e700aea9a680f7",
+      "sha256": "6663d86176cae9b3f4d6aa9e9e68586d9323b1e15c23f0687bf81293ddf36273",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -155,7 +155,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "73d88a7b6919b852ac07179299042b447088a77d390d20724910ad218f764ddf",
+      "sha256": "744b2e0aca09819ae6ced7f458055e07db94298396e81a64cbaf846468fca57c",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -175,7 +175,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "8d52a3ebf6a326ccdfbc7c101c3a199da80e305614d3c1a8fefeaa7d66ffd647",
+      "sha256": "d3d1258b7ecfaa178c5c7ae8d2e356f3cfe67268956e291a655cc9e8724f2def",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",

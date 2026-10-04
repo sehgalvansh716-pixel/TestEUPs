@@ -110,54 +110,58 @@ object CinejoyWasmEngine {
             memory.write(t, plaintextBytes)
             memory.write(m, randomBytes)
 
-            val resultPtr = sealRequest.apply(t.toLong(), plaintextBytes.size.toLong(), m.toLong(), n.toLong())[0].toInt()
-            if (resultPtr == 0) {
-                alloc.apply(n.toLong())
+            val outLen = sealRequest.apply(
+                t.toLong(),
+                plaintextBytes.size.toLong(),
+                m.toLong(),
+                randomBytes.size.toLong(),
+                n.toLong(),
+                maxLen.toLong()
+            )[0].toInt()
+
+            if (outLen <= 98) {
                 dealloc.apply(t.toLong(), plaintextBytes.size.toLong())
                 dealloc.apply(m.toLong(), randomBytes.size.toLong())
-                Log.e("CinejoyWasmEngine", "seal_request returned 0 for $server")
+                dealloc.apply(n.toLong(), maxLen.toLong())
+                Log.e("CinejoyWasmEngine", "seal_request output too small: $outLen for $server")
                 return@withContext null
             }
 
-            val outLen = memory.readI32(resultPtr).toInt()
-            val outPtr = memory.readI32(resultPtr + 4).toInt()
-            val sealedBytes = memory.readBytes(outPtr, outLen)
+            val output = memory.readBytes(n, outLen)
 
-            val ephemeralPublic = sealedBytes.copyOfRange(0, 65)
-            val requestKey = sealedBytes.copyOfRange(65, 97)
-            val responseKey = sealedBytes.copyOfRange(97, 129)
-            val keyId = sealedBytes[129]
-            val encryptedReq = sealedBytes.copyOfRange(130, sealedBytes.size)
+            dealloc.apply(t.toLong(), plaintextBytes.size.toLong())
+            dealloc.apply(m.toLong(), randomBytes.size.toLong())
+            dealloc.apply(n.toLong(), maxLen.toLong())
 
-            val gatewayPayload = ByteArray(1 + 65 + 1 + encryptedReq.size)
-            gatewayPayload[0] = 2 // version
-            System.arraycopy(ephemeralPublic, 0, gatewayPayload, 1, 65)
-            gatewayPayload[66] = keyId
-            System.arraycopy(encryptedReq, 0, gatewayPayload, 67, encryptedReq.size)
+            val responseKey = output.copyOfRange(0, 32)
+            val keyId = output[32]
+            val ephemeralPublic = output.copyOfRange(33, 98)
+            val body = output.copyOfRange(98, outLen)
 
-            val reqBody = gatewayPayload.toRequestBody("application/octet-stream".toMediaType())
-            val gatewayReq = Request.Builder()
+            // POST to gateway
+            val mediaType = "application/octet-stream".toMediaType()
+            val requestBody = body.toRequestBody(mediaType)
+            val request = Request.Builder()
                 .url(GATEWAY_URL)
-                .post(reqBody)
                 .header("Referer", REFERER)
                 .header("Origin", ORIGIN)
                 .header("User-Agent", USER_AGENT)
-                .header("Content-Type", "application/octet-stream")
+                .post(requestBody)
                 .build()
 
-            val encryptedResp = client.newCall(gatewayReq).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.e("CinejoyWasmEngine", "Gateway returned HTTP ${resp.code} for $server")
-                    return@withContext null
-                }
-                resp.body?.bytes()
-            } ?: return@withContext null
+            val response = client.newCall(request).execute()
+            if (!response.isSuccessful) {
+                Log.e("CinejoyWasmEngine", "Gateway returned HTTP ${response.code} for $server")
+                return@withContext null
+            }
 
-            if (encryptedResp.size < 12) {
+            val encryptedResp = response.body?.bytes() ?: return@withContext null
+            if (encryptedResp.size < 28) {
                 Log.e("CinejoyWasmEngine", "Gateway response too short: ${encryptedResp.size}")
                 return@withContext null
             }
 
+            // Decrypt AES-256-GCM
             val iv = encryptedResp.copyOfRange(0, 12)
             val ciphertextWithTag = encryptedResp.copyOfRange(12, encryptedResp.size)
 
