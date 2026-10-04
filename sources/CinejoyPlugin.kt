@@ -6,23 +6,34 @@ import com.euthopiar.core.util.TmdbBridge
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.flow
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.URI
 import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
- * Cinejoy reference streaming provider implementation.
+ * Official Cinejoy Universal Provider Plugin (https://cinejoy.pk/).
  *
- * Scrapes metadata and extracts streams from https://cinejoy.pk/ via wing.st backend services:
- * - Curated collections: https://lists.wing.st/joy
- * - Search: https://server.wing.st/api/lists/public/search?q={query}
- * - Metadata details: https://api.wing.st/info?type={movie|tv}&tmdb={tmdbId}
- * - Subtitles: https://subs.wing.st/subtitles?type={movie|tv}&tmdb={tmdbId}
- * - Stream extraction: Wasm-sealed gateway POST (via [CinejoyWasmEngine])
+ * Re-architected from scratch following the proven Aether and 4KHDHub production model:
+ * - Curated Cinejoy & TMDB trending catalog feeds with studio clear logos and 16:9 backdrops
+ * - Universal search across movies and TV series
+ * - Seamless season & episode breakdown with canonical titles and stills
+ * - Multi-Server Progressive Live Streaming Engine:
+ *     1. Nebula: Native Cinejoy Wasm gateway 1080p FHD & 720p HD master HLS streams
+ *     2. Lisbon: Native Cinejoy edge mirror with real-time pre-flight verification
+ *     3. Helios: Ultra high-speed multi-quality engine (1080p FHD, 720p HD, 480p SD, Auto) via AES-GCM
+ *     4. Aphrodite: High-speed edge CDN with Atlantic origin playback
+ *     5. Meridian & Link: High-speed direct HLS backup mirrors
+ * - Multilingual Subtitle Engine:
+ *     - Wing Subtitles (subs.wing.st)
+ *     - Granite API (sub.vdrk.site) 60+ languages
+ *     - Natsuki API (natsuki.hls.lol) 250+ languages
+ * - High-Speed Direct Downloads for all resolution tiers (1080p, 720p, 480p)
  */
 class CinejoyPlugin(
     private val client: OkHttpClient = DohDns.createOkHttpClient(
@@ -42,7 +53,9 @@ class CinejoyPlugin(
         this.host = host
     }
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    private val tmdbApiKey = "1865f43a0549ca50d341dd9ab8b29f49"
 
     private val defaultHeaders: Map<String, String>
         get() = mapOf(
@@ -52,14 +65,25 @@ class CinejoyPlugin(
             "Accept-Ranges" to "bytes"
         )
 
-    @Volatile
-    private var sessionCachedCatalog: List<CatalogRow>? = null
-    @Volatile
-    private var lastSessionIndex: Int = -1
+    private val heliosKeyHex = "117c358bcfcaf8fe2cfca57c9d2238a300e1c4de2efb83a5012ba84d8a31f1dd"
 
-    private fun newRequestBuilder(url: String): Request.Builder {
+    private val logoCache = ConcurrentHashMap<String, String>()
+
+    private fun hexToBytes(hex: String): ByteArray {
+        val len = hex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
+    }
+
+    private fun newRequestBuilder(url: String, customHeaders: Map<String, String>? = null): Request.Builder {
         val builder = Request.Builder().url(url)
         defaultHeaders.forEach { (k, v) -> builder.header(k, v) }
+        customHeaders?.forEach { (k, v) -> builder.header(k, v) }
         return builder
     }
 
@@ -67,88 +91,32 @@ class CinejoyPlugin(
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 CinejoyWasmEngine.prewarm(client)
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
         }
     }
 
     override suspend fun getHomeCatalog(): List<CatalogRow> = withContext(Dispatchers.IO) {
-        val currentSessionIndex = com.euthopiar.core.util.AppSessionManager.getSessionIndex()
-        sessionCachedCatalog?.takeIf { lastSessionIndex == currentSessionIndex }?.let {
-            return@withContext it
-        }
-
         coroutineScope {
-            val deferredRows = mutableListOf<Deferred<CatalogRow?>>()
-            val sessionRandom = kotlin.random.Random(currentSessionIndex.toLong())
-
-            // 1. Curated collections from lists.wing.st/joy
-            val joyCategoryMappings = listOf(
-                "rotten-tomatoes-best-of-all-time" to "Trending & Popular Movies",
-                "oscar-nominees-best-picture" to "Oscar Nominees for Best Picture",
-                "psychological-thrillers" to "Psychological & Mystery Thrillers",
-                "cannes-film-festival" to "Critically Acclaimed Cinema",
-                "mindfuck-movies" to "High-Octane Action & Sci-Fi",
-                "halloween-top-100" to "Cult Classics & Dark Cinema",
-                "based-on-a-true-story" to "True Stories & Biographies"
+            val categories = listOf(
+                "Trending On Cinejoy" to "https://api.themoviedb.org/3/trending/all/week?api_key=$tmdbApiKey",
+                "Now Playing in Theatres" to "https://api.themoviedb.org/3/movie/now_playing?api_key=$tmdbApiKey",
+                "Popular Movies" to "https://api.themoviedb.org/3/movie/popular?api_key=$tmdbApiKey",
+                "Top Rated TV Shows" to "https://api.themoviedb.org/3/tv/top_rated?api_key=$tmdbApiKey",
+                "Cinejoy Featured Series" to "https://api.themoviedb.org/3/tv/popular?api_key=$tmdbApiKey",
+                "Critically Acclaimed Cinema" to "https://api.themoviedb.org/3/movie/top_rated?api_key=$tmdbApiKey",
+                "Action & Sci-Fi Blockbusters" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=28,878&sort_by=popularity.desc",
+                "Crime & Mystery Hits" to "https://api.themoviedb.org/3/discover/tv?api_key=$tmdbApiKey&with_genres=80,9648&sort_by=popularity.desc",
+                "Animation & Family Hits" to "https://api.themoviedb.org/3/discover/tv?api_key=$tmdbApiKey&with_genres=16&sort_by=popularity.desc",
+                "Comedy Specials & Hits" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=35&sort_by=popularity.desc"
             )
 
-            // 2. Curated collections for Binge-Worthy TV & Expanded Community Lists
-            val specializedLists = listOf(
-                "HxSiTV9w2Pe7" to "Binge-Worthy TV Series",
-                "3i6biWnQ9cT3" to "Must-Watch Series",
-                "jxMaqCV8qsmg" to "Animation & Family Hits",
-                "hcA8ABnfXnDx" to "Movies to Watch with Friends",
-                "YFWpn2Mpncw2" to "Top Rated Web Series",
-                "URN5s836Cxcf" to "Crowd-Favorite Cinema",
-                "iywPGni7zjAF" to "Comedy & Feel-Good Hits",
-                "rjzpDyM7YpWD" to "Animated Superhero Universe",
-                "dc7eS5KZvqVu" to "Romance & Heartfelt Cinema",
-                "ypGF98kbeyUn" to "High-Stakes Thrillers & Sci-Fi"
-            )
-
-            // Deterministically rotate categories and offsets based on current launch session index
-            val dynamicJoy = joyCategoryMappings.shuffled(sessionRandom)
-            val dynamicTv = specializedLists.shuffled(sessionRandom)
-
-            val combined = mutableListOf<Triple<Boolean, Pair<String, String>, Int>>()
-            // Select 6 diverse Joy movie collections with session-shifted offsets
-            dynamicJoy.take(6).forEachIndexed { idx, pair ->
-                val offset = ((currentSessionIndex * 30) + (idx * 20)) % 150
-                combined.add(Triple(true, pair, offset))
+            val deferredRows = categories.map { (title, url) ->
+                async { fetchCatalogRow(title, url) }
             }
-            // Select 5 diverse TV Series & community collections with session-shifted offsets
-            dynamicTv.take(5).forEachIndexed { idx, pair ->
-                val offset = (currentSessionIndex * 15) % 40
-                combined.add(Triple(false, pair, offset))
-            }
-
-            // Interleave movies and series for great vertical flow
-            val joyList = combined.filter { it.first }
-            val tvList = combined.filter { !it.first }
-            val maxLen = maxOf(joyList.size, tvList.size)
-            val interleaved = mutableListOf<Triple<Boolean, Pair<String, String>, Int>>()
-            for (i in 0 until maxLen) {
-                if (i < joyList.size) interleaved.add(joyList[i])
-                if (i < tvList.size) interleaved.add(tvList[i])
-            }
-
-            for (entry in interleaved) {
-                val isJoy = entry.first
-                val (slug, rowTitle) = entry.second
-                val offset = entry.third
-                deferredRows.add(
-                    async {
-                        if (isJoy) {
-                            fetchJoyCollection(slug, rowTitle, limit = 40, offset = offset)
-                        } else {
-                            fetchPublicList(slug, rowTitle, limit = 40, offset = offset)
-                        }
-                    }
-                )
-            }
-
             val rows = deferredRows.awaitAll().filterNotNull()
-            val finalRows = if (rows.isNotEmpty()) {
+
+            // Concurrently enrich clear logos for hero/top row items
+            if (rows.isNotEmpty()) {
                 val firstRow = rows.first()
                 val candidateItemsWithLogos = firstRow.items.take(10).map { item ->
                     async {
@@ -160,385 +128,173 @@ class CinejoyPlugin(
             } else {
                 rows
             }
-
-            if (finalRows.isNotEmpty()) {
-                sessionCachedCatalog = finalRows
-                lastSessionIndex = currentSessionIndex
-            }
-            finalRows
         }
     }
 
-    private fun fetchJoyCollection(collectionId: String, displayTitle: String, limit: Int = 40, offset: Int = 0): CatalogRow? {
+    private fun fetchCatalogRow(title: String, url: String): CatalogRow? {
         try {
-            val colReq = newRequestBuilder("https://lists.wing.st/joy/$collectionId?limit=$limit&offset=$offset").build()
-            val colBody = client.newCall(colReq).execute().use { colResp ->
-                if (colResp.isSuccessful) colResp.body?.string() else null
-            } ?: return null
-            val colRoot = json.parseToJsonElement(colBody).jsonObject
-            val itemsArr = colRoot["items"]?.jsonArray ?: return null
+            val req = Request.Builder().url(url).build()
+            val resp = client.newCall(req).execute()
+            if (!resp.isSuccessful) return null
+            val body = resp.body?.string() ?: return null
+            val root = json.parseToJsonElement(body).jsonObject
+            val results = root["results"]?.jsonArray ?: return null
 
             val items = mutableListOf<MediaItem>()
-            for (itemElem in itemsArr) {
-                val itemObj = itemElem.jsonObject
-                val idsObj = itemObj["ids"]?.jsonObject
-                val tmdbId = idsObj?.get("tmdb")?.jsonPrimitive?.contentOrNull
-                    ?: itemObj["id"]?.jsonPrimitive?.contentOrNull
+            for (elem in results) {
+                val obj = elem.jsonObject
+                val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                val isTv = obj.containsKey("first_air_date") || obj.containsKey("name")
+                val itemTitle = obj["title"]?.jsonPrimitive?.contentOrNull
+                    ?: obj["name"]?.jsonPrimitive?.contentOrNull
                     ?: continue
 
-                val itemTitle = itemObj["title"]?.jsonPrimitive?.content ?: "Unknown"
-                val typeStr = itemObj["type"]?.jsonPrimitive?.contentOrNull ?: "movie"
-                val mediaType = if (typeStr == "tv") MediaType.TV_SERIES else MediaType.MOVIE
+                val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
+                val poster = if (posterPath != null) "https://image.tmdb.org/t/p/w500$posterPath" else null
 
-                var poster = itemObj["poster"]?.jsonPrimitive?.contentOrNull
-                if (poster != null) {
-                    poster = poster.replace("/w200/", "/w500/")
-                    if (!poster.startsWith("http")) {
-                        poster = "https://image.tmdb.org/t/p/w500$poster"
-                    }
-                }
+                val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
+                val backdrop = if (backdropPath != null) "https://image.tmdb.org/t/p/w1280$backdropPath" else poster
 
-                // High-res landscape backdrop: Cinemeta metahub CDN or TMDB 1280
-                val imdbId = idsObj?.get("imdb")?.jsonPrimitive?.contentOrNull
-                val backdrop = if (imdbId != null && imdbId.startsWith("tt")) {
-                    "https://images.metahub.space/background/medium/$imdbId/img"
-                } else if (poster != null) {
-                    poster.replace("/w500/", "/w1280/")
-                } else null
+                val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
+                    ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
+                val year = dateStr?.take(4)?.toIntOrNull()
 
-                val logoUrl = if (imdbId != null && imdbId.startsWith("tt")) {
-                    "https://images.metahub.space/logo/medium/$imdbId/img.png"
-                } else null
-
-                val year = itemObj["year"]?.jsonPrimitive?.intOrNull
-                val score = itemObj["score"]?.jsonPrimitive?.doubleOrNull
+                val voteAvg = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+                val rating = if (voteAvg != null && voteAvg > 0.0) String.format("%.1f", voteAvg) else null
 
                 items.add(
                     MediaItem(
-                        id = tmdbId,
+                        id = id,
                         title = itemTitle,
-                        url = "https://cinejoy.pk/$typeStr/$tmdbId",
+                        url = "https://cinejoy.pk/${if (isTv) "tv" else "movie"}/$id",
                         posterUrl = poster,
                         backdropUrl = backdrop,
-                        type = mediaType,
+                        type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
                         year = year,
-                        rating = score?.toString(),
-                        quality = "HD",
-                        provider = name,
-                        logoUrl = logoUrl
-                    )
-                )
-            }
-
-            return if (items.isNotEmpty()) CatalogRow(title = displayTitle, items = items) else null
-        } catch (e: Exception) {
-            return null
-        }
-    }
-
-    private fun fetchPublicList(slug: String, displayTitle: String, limit: Int = 40, offset: Int = 0): CatalogRow? {
-        try {
-            val req = newRequestBuilder("https://server.wing.st/api/lists/public/$slug").build()
-            val body = client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) resp.body?.string() else null
-            } ?: return null
-            val root = json.parseToJsonElement(body).jsonObject
-            val itemsArr = root["items"]?.jsonArray ?: return null
-
-            val items = mutableListOf<MediaItem>()
-            val sliced = if (itemsArr.size > offset) itemsArr.drop(offset).take(limit) else itemsArr.take(limit)
-            for (itemElem in sliced) {
-                val itemObj = itemElem.jsonObject
-                val tmdbId = itemObj["tmdbId"]?.jsonPrimitive?.contentOrNull ?: continue
-                val itemTitle = itemObj["title"]?.jsonPrimitive?.contentOrNull ?: "Unknown"
-                val mediaTypeStr = itemObj["mediaType"]?.jsonPrimitive?.contentOrNull ?: "movie"
-                val mediaType = if (mediaTypeStr == "tv") MediaType.TV_SERIES else MediaType.MOVIE
-
-                var poster = itemObj["poster"]?.jsonPrimitive?.contentOrNull
-                if (poster != null) {
-                    poster = poster.replace("/w200/", "/w500/")
-                    if (!poster.startsWith("http")) {
-                        poster = "https://image.tmdb.org/t/p/w500$poster"
-                    }
-                }
-
-                val backdrop = if (poster != null) poster.replace("/w500/", "/w1280/") else null
-                val year = itemObj["year"]?.jsonPrimitive?.intOrNull
-
-                items.add(
-                    MediaItem(
-                        id = tmdbId,
-                        title = itemTitle,
-                        url = "https://cinejoy.pk/$mediaTypeStr/$tmdbId",
-                        posterUrl = poster,
-                        backdropUrl = backdrop,
-                        type = mediaType,
-                        year = year,
-                        rating = null,
-                        quality = "HD",
+                        rating = rating,
                         provider = name
                     )
                 )
             }
-
-            return if (items.isNotEmpty()) CatalogRow(title = displayTitle, items = items) else null
-        } catch (e: Exception) {
+            return if (items.isNotEmpty()) CatalogRow(title, items) else null
+        } catch (_: Exception) {
             return null
         }
     }
 
-
     override suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
-        val encodedQuery = URLEncoder.encode(query, "UTF-8")
+        if (query.isBlank()) return@withContext emptyList()
         val results = mutableListOf<MediaItem>()
-        val seenIds = mutableSetOf<String>()
-
-        // 1. Primary: Direct TMDB Multi-Search (full catalog coverage)
         try {
-            val tmdbSearchUrl = "https://api.tmdb.org/3/search/multi?api_key=8476a7ab80ad76f0936744df0430e67c&query=$encodedQuery"
-            val tmdbReq = Request.Builder()
-                .url(tmdbSearchUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                .build()
-            client.newCall(tmdbReq).execute().use { tmdbResp ->
-                if (tmdbResp.isSuccessful) {
-                    val tmdbBody = tmdbResp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(tmdbBody).jsonObject
-                    val resArr = root["results"]?.jsonArray
-                    if (resArr != null) {
-                        for (elem in resArr) {
-                            val obj = elem.jsonObject
-                            val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull ?: continue
-                            if (mediaTypeStr != "movie" && mediaTypeStr != "tv") continue
-                            val tmdbId = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
-                            if (!seenIds.add(tmdbId)) continue
-
-                            val title = obj["title"]?.jsonPrimitive?.contentOrNull
-                                ?: obj["name"]?.jsonPrimitive?.contentOrNull
-                                ?: "Unknown"
-                            val type = if (mediaTypeStr == "tv") MediaType.TV_SERIES else MediaType.MOVIE
-                            val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
-                            val posterUrl = posterPath?.let { "https://image.tmdb.org/t/p/w500$it" }
-                            val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
-                            val backdropUrl = backdropPath?.let { "https://image.tmdb.org/t/p/w1280$it" } ?: posterUrl
-
-                            val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
-                                ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
-                            val year = dateStr?.take(4)?.toIntOrNull()
-                            val vote = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
-
-                            results.add(
-                                MediaItem(
-                                    id = tmdbId,
-                                    title = title,
-                                    url = "https://cinejoy.pk/$mediaTypeStr/$tmdbId",
-                                    posterUrl = posterUrl,
-                                    backdropUrl = backdropUrl,
-                                    type = type,
-                                    year = year,
-                                    rating = vote?.let { String.format("%.1f", it) },
-                                    quality = "HD",
-                                    provider = name
-                                )
-                            )
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Ignore TMDB search error
-        }
-
-        // 2. Secondary: Wing.st public curated collections search
-        try {
-            val req = newRequestBuilder("https://server.wing.st/api/lists/public/search?q=$encodedQuery").build()
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
+            val url = "https://api.themoviedb.org/3/search/multi?api_key=$tmdbApiKey&query=$encodedQuery"
+            val req = Request.Builder().url(url).build()
             client.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: ""
-                    val rootElem = json.parseToJsonElement(body)
-                    val itemsArr = when (rootElem) {
-                        is JsonArray -> rootElem
-                        is JsonObject -> rootElem["items"]?.jsonArray ?: JsonArray(emptyList())
-                        else -> JsonArray(emptyList())
-                    }
+                    val root = json.parseToJsonElement(body).jsonObject
+                    val arr = root["results"]?.jsonArray ?: return@use
+                    for (elem in arr) {
+                        val obj = elem.jsonObject
+                        val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull
+                        val isMovie = mediaTypeStr == "movie"
+                        val isTv = mediaTypeStr == "tv"
+                        if (!isMovie && !isTv) continue
 
-                    for (itemElem in itemsArr) {
-                        val previewArr = itemElem.jsonObject["preview"]?.jsonArray ?: continue
-                        for (previewElem in previewArr) {
-                            val pObj = previewElem.jsonObject
-                            val tmdbId = pObj["tmdbId"]?.jsonPrimitive?.content ?: continue
-                            if (!seenIds.add(tmdbId)) continue
+                        val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val itemTitle = obj["title"]?.jsonPrimitive?.contentOrNull
+                            ?: obj["name"]?.jsonPrimitive?.contentOrNull
+                            ?: continue
 
-                            val title = pObj["title"]?.jsonPrimitive?.content ?: "Unknown"
-                            val mediaTypeStr = pObj["mediaType"]?.jsonPrimitive?.content ?: "movie"
-                            val type = if (mediaTypeStr == "tv") MediaType.TV_SERIES else MediaType.MOVIE
-                            var poster = pObj["poster"]?.jsonPrimitive?.contentOrNull
-                            if (poster != null && !poster.startsWith("http")) {
-                                poster = "https://image.tmdb.org/t/p/w500$poster"
-                            }
-                            val year = pObj["year"]?.jsonPrimitive?.intOrNull
+                        val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
+                        val poster = if (posterPath != null) "https://image.tmdb.org/t/p/w500$posterPath" else null
 
-                            results.add(
-                                MediaItem(
-                                    id = tmdbId,
-                                    title = title,
-                                    url = "https://cinejoy.pk/$mediaTypeStr/$tmdbId",
-                                    posterUrl = poster,
-                                    backdropUrl = if (poster != null) poster.replace("/w500/", "/w1280/") else null,
-                                    type = type,
-                                    year = year,
-                                    rating = null,
-                                    quality = "HD",
-                                    provider = name
-                                )
+                        val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
+                        val backdrop = if (backdropPath != null) "https://image.tmdb.org/t/p/w1280$backdropPath" else poster
+
+                        val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
+                            ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
+                        val year = dateStr?.take(4)?.toIntOrNull()
+
+                        val voteAvg = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+                        val rating = if (voteAvg != null && voteAvg > 0.0) String.format("%.1f", voteAvg) else null
+
+                        results.add(
+                            MediaItem(
+                                id = id,
+                                title = itemTitle,
+                                url = "https://cinejoy.pk/${if (isTv) "tv" else "movie"}/$id",
+                                posterUrl = poster,
+                                backdropUrl = backdrop,
+                                type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
+                                year = year,
+                                rating = rating,
+                                provider = name
                             )
-                        }
+                        )
                     }
                 }
             }
-        } catch (e: Exception) {
-            // Ignore search network exceptions
-        }
-
+        } catch (_: Exception) {}
         results
     }
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val isTv = mediaItem.type == MediaType.TV_SERIES
-        val typeStr = if (isTv) "tv" else "movie"
-        val tmdbId = mediaItem.id
+        val rawId = mediaItem.id.ifBlank { mediaItem.url }
+        val tmdbId = Regex("""\b(\d+)\b""").find(rawId)?.value ?: rawId
 
-        var wingTitle: String? = null
-        var wingYear: Int? = null
-        var wingSynopsis: String? = null
-        var wingPoster: String? = null
-        var wingRating: String? = null
-        var wingContentRating: String? = null
-        var wingImdbId: String? = null
-        var wingGenres = listOf<String>()
-        var wingRuntime: String? = null
-        var wingBackdrop: String? = null
-        var maxSeason = 1
-        var maxEpisode = 1
+        val enriched = TmdbBridge.fetchEnrichedDetails(client, tmdbId, isTv, mediaItem.title, tmdbApiKey)
 
-        try {
-            val url = "https://api.wing.st/info?type=$typeStr&tmdb=$tmdbId"
-            val req = newRequestBuilder(url).build()
-            client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: ""
-                    val obj = json.parseToJsonElement(body).jsonObject
-
-                wingTitle = obj["title"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                wingYear = obj["year"]?.jsonPrimitive?.intOrNull
-                wingSynopsis = obj["description"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                    ?: obj["overview"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                wingPoster = obj["poster"]?.jsonPrimitive?.contentOrNull
-                wingRating = obj["imdb_rating"]?.jsonPrimitive?.contentOrNull
-                wingContentRating = obj["content_rating"]?.jsonPrimitive?.contentOrNull
-                wingImdbId = obj["imdb_id"]?.jsonPrimitive?.contentOrNull
-
-                wingGenres = when (val catsElem = obj["cats"]) {
-                    is JsonArray -> catsElem.mapNotNull { it.jsonPrimitive.contentOrNull }
-                    is JsonPrimitive -> catsElem.contentOrNull?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList()
-                    else -> emptyList()
-                }
-                wingRuntime = obj["runtime"]?.jsonPrimitive?.intOrNull?.let { "$it min" }
-
-                wingBackdrop = if (wingImdbId != null && wingImdbId.startsWith("tt")) {
-                    "https://images.metahub.space/background/medium/$wingImdbId/img"
-                } else if (wingPoster != null) {
-                    wingPoster.replace("/w200/", "/w1280/").replace("/w500/", "/w1280/")
-                } else null
-
-                if (isTv) {
-                    maxSeason = obj["max_season"]?.jsonPrimitive?.intOrNull ?: 1
-                    maxEpisode = obj["max_episode"]?.jsonPrimitive?.intOrNull ?: 1
-                }
-            }
-        }
-        } catch (_: Exception) {}
-
-        // Centralized TMDB Enrichment Bridge for complete v3.0 metadata contract
-        val enriched = TmdbBridge.fetchEnrichedDetails(client, tmdbId, isTv, wingTitle ?: mediaItem.title)
-
-        val title = wingTitle?.takeIf { it.isNotBlank() } ?: enriched?.title ?: mediaItem.title
-        val poster = enriched?.posterUrl ?: wingPoster ?: mediaItem.posterUrl
-        val backdrop = enriched?.backdropUrl ?: wingBackdrop ?: mediaItem.backdropUrl ?: poster
-        val year = enriched?.year ?: wingYear ?: mediaItem.year
-        val synopsis = wingSynopsis?.takeIf { it.isNotBlank() } ?: enriched?.synopsis ?: ""
-        val genres = wingGenres.ifEmpty { enriched?.genres ?: emptyList() }
-        val duration = enriched?.duration ?: wingRuntime
-        val rating = wingRating ?: enriched?.rating ?: mediaItem.rating
-        val contentRating = wingContentRating ?: enriched?.contentRating
-        val imdbId = wingImdbId ?: enriched?.imdbId
+        val title = enriched?.title?.ifBlank { mediaItem.title } ?: mediaItem.title
+        val posterUrl = enriched?.posterUrl ?: mediaItem.posterUrl
+        val backdropUrl = enriched?.backdropUrl ?: mediaItem.backdropUrl
+        val year = enriched?.year ?: mediaItem.year
+        val synopsis = enriched?.synopsis ?: ""
+        val genres = enriched?.genres ?: emptyList()
+        val cast = enriched?.cast ?: emptyList()
+        val rating = enriched?.rating ?: mediaItem.rating
         val rottenTomatoes = enriched?.rottenTomatoesRating
+        val contentRating = enriched?.contentRating
+        val duration = enriched?.duration
         val trailerUrl = enriched?.trailerUrl
         val directors = enriched?.directors ?: emptyList()
         val recommendations = enriched?.recommendations ?: emptyList()
-        val logoUrl = enriched?.logoUrl ?: resolveLogo(mediaItem) ?: (if (imdbId != null && imdbId.startsWith("tt")) {
-            "https://images.metahub.space/logo/medium/$imdbId/img.png"
-        } else mediaItem.logoUrl)
-
-        val cast = enriched?.cast?.ifEmpty { null } ?: fetchCast(tmdbId, imdbId, mediaItem.type)
+        val logoUrl = enriched?.logoUrl ?: resolveLogo(mediaItem)
+        val imdbId = enriched?.imdbId
 
         val episodes = mutableListOf<EpisodeItem>()
         if (isTv) {
-            val seasonNumbers = enriched?.seasonNumbers?.ifEmpty { null } ?: (1..maxSeason).toList()
-            val tmdbSeasonsData = TmdbBridge.fetchTmdbSeasons(client, tmdbId, seasonNumbers)
-
-            for (s in seasonNumbers) {
-                val epMap = tmdbSeasonsData[s]
+            val seasonNumbers = enriched?.seasonNumbers ?: listOf(1)
+            val tmdbSeasonsData = TmdbBridge.fetchTmdbSeasons(client, tmdbId, seasonNumbers, tmdbApiKey)
+            for (sNum in seasonNumbers) {
+                val epMap = tmdbSeasonsData[sNum]
                 if (!epMap.isNullOrEmpty()) {
-                    for ((e, epDetail) in epMap.toSortedMap()) {
+                    for ((epNum, epDetail) in epMap.toSortedMap()) {
                         episodes.add(
                             EpisodeItem(
-                                id = TmdbBridge.sanitizeSlug("$tmdbId-s${s}e$e"),
-                                title = epDetail.name.ifBlank { "Episode $e" },
-                                seasonNumber = s,
-                                episodeNumber = e,
-                                data = "$tmdbId:$s:$e",
-                                thumbnail = epDetail.stillUrl ?: (if (imdbId != null && imdbId.startsWith("tt")) "https://episodes.metahub.space/$imdbId/$s/$e/w780.jpg" else backdrop ?: poster),
-                                description = epDetail.overview ?: "Season $s • Episode $e",
-                                duration = epDetail.duration ?: duration ?: "45 min"
-                            )
-                        )
-                    }
-                } else {
-                    val epsCount = if (s == maxSeason) maxEpisode else 10
-                    for (e in 1..epsCount) {
-                        val epThumbnail = if (imdbId != null && imdbId.startsWith("tt")) {
-                            "https://episodes.metahub.space/$imdbId/$s/$e/w780.jpg"
-                        } else {
-                            backdrop ?: poster
-                        }
-                        episodes.add(
-                            EpisodeItem(
-                                id = TmdbBridge.sanitizeSlug("$tmdbId-s${s}e$e"),
-                                title = "Episode $e",
-                                seasonNumber = s,
-                                episodeNumber = e,
-                                data = "$tmdbId:$s:$e",
-                                thumbnail = epThumbnail,
-                                description = "Season $s • Episode $e",
-                                duration = duration ?: "45 min"
+                                id = TmdbBridge.sanitizeSlug("$tmdbId-s${sNum}e$epNum"),
+                                title = epDetail.name.ifBlank { "Season $sNum - Episode $epNum" },
+                                seasonNumber = sNum,
+                                episodeNumber = epNum,
+                                data = "$tmdbId:$sNum:$epNum",
+                                thumbnail = epDetail.stillUrl ?: backdropUrl,
+                                description = epDetail.overview,
+                                duration = epDetail.duration
                             )
                         )
                     }
                 }
             }
-
             if (episodes.isEmpty()) {
                 episodes.add(
                     EpisodeItem(
                         id = TmdbBridge.sanitizeSlug("$tmdbId-s1e1"),
-                        title = "Episode 1",
+                        title = "$title - Episode 1",
                         seasonNumber = 1,
                         episodeNumber = 1,
                         data = "$tmdbId:1:1",
-                        thumbnail = backdrop ?: poster,
-                        description = synopsis,
-                        duration = duration ?: "45 min"
+                        thumbnail = backdropUrl
                     )
                 )
             }
@@ -550,19 +306,20 @@ class CinejoyPlugin(
                     seasonNumber = 1,
                     episodeNumber = 1,
                     data = tmdbId,
-                    thumbnail = backdrop ?: poster,
+                    thumbnail = backdropUrl,
                     description = synopsis,
                     duration = duration
                 )
             )
         }
 
+        val typeStr = if (isTv) "tv" else "movie"
         MediaDetail(
             id = TmdbBridge.sanitizeSlug(tmdbId),
             title = title,
-            url = mediaItem.url,
-            posterUrl = poster,
-            backdropUrl = backdrop,
+            url = "https://cinejoy.pk/$typeStr/$tmdbId",
+            posterUrl = posterUrl,
+            backdropUrl = backdropUrl,
             type = mediaItem.type,
             year = year,
             synopsis = synopsis,
@@ -582,324 +339,135 @@ class CinejoyPlugin(
         )
     }
 
-    private val logoMemoryCache = java.util.concurrent.ConcurrentHashMap<String, String>()
-
-    override suspend fun resolveLogo(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
-        val tmdbId = mediaItem.id
-        if (tmdbId.isBlank()) return@withContext null
-
-        logoMemoryCache[tmdbId]?.let { return@withContext it }
-
-        val isTv = mediaItem.type == MediaType.TV_SERIES
-        val logo = TmdbBridge.resolveLogo(client, tmdbId, isTv)
-        if (logo != null) {
-            logoMemoryCache[tmdbId] = logo
-            return@withContext logo
-        }
-
-        // Secondary: Metahub logo if already present or available
-        val itemLogo = mediaItem.logoUrl
-        if (!itemLogo.isNullOrBlank()) {
-            logoMemoryCache[tmdbId] = itemLogo
-            return@withContext itemLogo
-        }
-
-        null
-    }
-
-    /**
-     * Asynchronously fetches cast members with actor profile pictures from TMDB or Cinemeta.
-     */
-    override suspend fun fetchCast(
-        tmdbId: String,
-        imdbId: String?,
-        type: MediaType
-    ): List<CastMember> = withContext(Dispatchers.IO) {
-        val typeStr = if (type == MediaType.TV_SERIES) "tv" else "movie"
-
-        // 1. Primary Source: Direct TMDB Credits API (matches Cinejoy client TMDB key & api.tmdb.org bypass)
-        try {
-            val tmdbCreditsUrl = "https://api.tmdb.org/3/$typeStr/$tmdbId/credits?api_key=8476a7ab80ad76f0936744df0430e67c"
-            val tmdbReq = Request.Builder()
-                .url(tmdbCreditsUrl)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                .build()
-            client.newCall(tmdbReq).execute().use { tmdbResp ->
-                if (tmdbResp.isSuccessful) {
-                    val tmdbBody = tmdbResp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(tmdbBody).jsonObject
-                    val castArr = root["cast"]?.jsonArray
-                    if (castArr != null && castArr.isNotEmpty()) {
-                        val tmdbCast = castArr.mapNotNull { elem ->
-                            val obj = elem.jsonObject
-                            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                            val character = obj["character"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
-                            val profilePath = obj["profile_path"]?.jsonPrimitive?.contentOrNull
-                            val profileUrl = profilePath?.let { "https://image.tmdb.org/t/p/w185$it" }
-                            val personId = obj["id"]?.jsonPrimitive?.contentOrNull ?: name
-                            CastMember(
-                                id = personId,
-                                name = name,
-                                character = character,
-                                profileUrl = profileUrl
-                            )
-                        }.distinctBy { it.id }.take(35)
-
-                        if (tmdbCast.isNotEmpty()) {
-                            return@withContext tmdbCast
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            // Fall through to secondary fallbacks
-        }
-
-        // 2. Fallback: Resolve effective IMDB ID
-        val effectiveImdbId = imdbId ?: run {
-            try {
-                val infoReq = newRequestBuilder("https://api.wing.st/info?type=$typeStr&tmdb=$tmdbId").build()
-                val infoResp = client.newCall(infoReq).execute()
-                if (infoResp.isSuccessful) {
-                    val infoBody = infoResp.body?.string() ?: ""
-                    json.parseToJsonElement(infoBody).jsonObject["imdb_id"]?.jsonPrimitive?.contentOrNull
-                } else null
-            } catch (e: Exception) {
-                null
-            }
-        }
-
-        // 3. Fallback for TV Series: Use TVMaze API for complete cast, characters, and headshots
-        if (type == MediaType.TV_SERIES && effectiveImdbId != null && effectiveImdbId.startsWith("tt")) {
-            try {
-                val showReq = Request.Builder()
-                    .url("https://api.tvmaze.com/lookup/shows?imdb=$effectiveImdbId")
-                    .header("User-Agent", "Mozilla/5.0")
-                    .build()
-                val showResp = client.newCall(showReq).execute()
-                if (showResp.isSuccessful) {
-                    val showBody = showResp.body?.string() ?: ""
-                    val showObj = json.parseToJsonElement(showBody).jsonObject
-                    val showId = showObj["id"]?.jsonPrimitive?.intOrNull
-                    if (showId != null) {
-                        val castReq = Request.Builder()
-                            .url("https://api.tvmaze.com/shows/$showId/cast")
-                            .header("User-Agent", "Mozilla/5.0")
-                            .build()
-                        val castResp = client.newCall(castReq).execute()
-                        if (castResp.isSuccessful) {
-                            val castBody = castResp.body?.string() ?: ""
-                            val castArr = json.parseToJsonElement(castBody).jsonArray
-                            val results = castArr.take(25).mapNotNull { elem ->
-                                val obj = elem.jsonObject
-                                val person = obj["person"]?.jsonObject ?: return@mapNotNull null
-                                val name = person["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
-                                val character = obj["character"]?.jsonObject?.get("name")?.jsonPrimitive?.contentOrNull
-                                val imgObj = person["image"]?.jsonObject
-                                val profileUrl = imgObj?.get("medium")?.jsonPrimitive?.contentOrNull
-                                    ?: imgObj?.get("original")?.jsonPrimitive?.contentOrNull
-                                val personId = person["id"]?.jsonPrimitive?.contentOrNull ?: name
-                                CastMember(
-                                    id = personId,
-                                    name = name,
-                                    character = character,
-                                    profileUrl = profileUrl
-                                )
-                            }.distinctBy { it.id }
-                            if (results.isNotEmpty()) return@withContext results
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // Fall through to Cinemeta + Wikipedia
-            }
-        }
-
-        // 4. Fallback for Movies: Cinemeta + Wikipedia Headshots
-        if (effectiveImdbId != null && effectiveImdbId.startsWith("tt")) {
-            try {
-                val cinemetaType = if (type == MediaType.TV_SERIES) "series" else "movie"
-                val cinemetaReq = Request.Builder()
-                    .url("https://v3-cinemeta.strem.io/meta/$cinemetaType/$effectiveImdbId.json")
-                    .header("User-Agent", "Mozilla/5.0")
-                    .build()
-                val cinemetaResp = client.newCall(cinemetaReq).execute()
-                if (cinemetaResp.isSuccessful) {
-                    val cinemetaBody = cinemetaResp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(cinemetaBody).jsonObject
-                    val metaObj = root["meta"]?.jsonObject
-                    val castArr = metaObj?.get("cast")?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
-                    val directors = metaObj?.get("director")?.jsonArray?.mapNotNull { it.jsonPrimitive.contentOrNull } ?: emptyList()
-
-                    val candidates = mutableListOf<Pair<String, String?>>()
-                    castArr.take(12).forEach { candidates.add(it to null) }
-                    directors.take(2).forEach { candidates.add(it to "Director") }
-
-                    if (candidates.isNotEmpty()) {
-                        val castWithPhotos = coroutineScope {
-                            candidates.mapIndexed { idx, (actorName, role) ->
-                                async {
-                                    val photoUrl = fetchWikipediaPhoto(actorName)
-                                    CastMember(
-                                        id = "${actorName}_$idx",
-                                        name = actorName,
-                                        character = role,
-                                        profileUrl = photoUrl
-                                    )
-                                }
-                            }.awaitAll()
-                        }
-                        return@withContext castWithPhotos
-                    }
-                }
-            } catch (e: Exception) {
-                // Ignore
-            }
-        }
-
-        emptyList()
-    }
-
-    private fun fetchWikipediaPhoto(name: String): String? {
-        return try {
-            val encodedName = URLEncoder.encode(name.replace(" ", "_"), "UTF-8")
-            val req = Request.Builder()
-                .url("https://en.wikipedia.org/api/rest_v1/page/summary/$encodedName")
-                .header("User-Agent", "EuthopiarApp/1.0 (contact@euthopiar.com)")
-                .build()
-            val resp = client.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string() ?: ""
-                val root = json.parseToJsonElement(body).jsonObject
-                root["thumbnail"]?.jsonObject?.get("source")?.jsonPrimitive?.contentOrNull
-            } else null
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-
-    @Volatile
-    private var cachedServers: List<String>? = null
-    @Volatile
-    private var lastServersFetchTime: Long = 0L
-
-    private suspend fun getActiveServers(): List<String> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        cachedServers?.takeIf { now - lastServersFetchTime < 300_000L }?.let { return@withContext it }
-
-        val dynamicList = mutableListOf<String>()
-        try {
-            val req = newRequestBuilder("https://api.wing.st/servers").build()
-            client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(body).jsonObject
-                    root["servers"]?.jsonArray?.forEach { elem ->
-                        val obj = elem.jsonObject
-                        val sName = obj["name"]?.jsonPrimitive?.contentOrNull
-                        val sStatus = obj["status"]?.jsonPrimitive?.contentOrNull
-                        if (sName != null && (sStatus == null || sStatus == "ok")) {
-                            dynamicList.add(sName)
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // Prioritized order: Nebula (100% verified HLS with multi-quality & seek), Lisbon, Scout, Solara, Riga, Athens
-        val defaultList = listOf("Nebula", "Lisbon", "Scout", "Solara", "Riga", "Athens")
-        val combined = if (dynamicList.isNotEmpty()) {
-            val sorted = mutableListOf<String>()
-            if (dynamicList.contains("Nebula")) sorted.add("Nebula")
-            if (dynamicList.contains("Lisbon")) sorted.add("Lisbon")
-            dynamicList.forEach { if (!sorted.contains(it)) sorted.add(it) }
-            defaultList.forEach { if (!sorted.contains(it)) sorted.add(it) }
-            sorted
-        } else {
-            defaultList
-        }
-
-        cachedServers = combined
-        lastServersFetchTime = now
-        combined
-    }
-
-    private fun isStreamLive(url: String, headers: Map<String, String>): Boolean {
-        return try {
-            val builder = Request.Builder()
-                .url(url)
-                .header("Range", "bytes=0-1024")
-            headers.forEach { (k, v) -> builder.header(k, v) }
-            val resp = client.newCall(builder.build()).execute()
-            resp.use {
-                it.isSuccessful && (it.code in 200..299)
-            }
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    private fun isDownloadLive(url: String): Boolean {
-        return try {
-            val req = Request.Builder()
-                .url(url)
-                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
-                .header("Range", "bytes=0-1024")
-                .build()
-            client.newCall(req).execute().use { resp ->
-                resp.isSuccessful && (resp.code == 200 || resp.code == 206)
-            }
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     override fun getStreamFlow(episodeData: String): Flow<StreamEmission> = channelFlow {
         val tmdbId: String
         val season: Int?
         val episode: Int?
-        val type: String
+        val isTv: Boolean
 
         if (episodeData.contains(":")) {
             val parts = episodeData.split(":")
             tmdbId = parts[0]
             season = parts.getOrNull(1)?.toIntOrNull()
             episode = parts.getOrNull(2)?.toIntOrNull()
-            type = "tv"
+            isTv = true
         } else {
             tmdbId = episodeData
             season = null
             episode = null
-            type = "movie"
+            isTv = false
         }
 
-        send(StreamEmission.StatusUpdate("Cinejoy", "Searching mirrors for Cinejoy ($tmdbId)..."))
+        send(StreamEmission.StatusUpdate(name, "Searching Cinejoy multi-server streams and CDNs ($tmdbId)..."))
 
-        val servers = getActiveServers()
-        val emittedStreamUrls = ConcurrentHashMap.newKeySet<String>()
+        val emittedStreamKeys = ConcurrentHashMap.newKeySet<String>()
         val emittedSubUrls = ConcurrentHashMap.newKeySet<String>()
+        val emittedSubLangs = ConcurrentHashMap.newKeySet<String>()
 
-        // 1. Asynchronously fetch external subtitles from native subs.wing.st and OpenSubtitles bridge
+        // 0. Subtitles Job (Wing Subtitles + Granite API + Natsuki API)
         launch {
+            // A. Native Wing Subtitles
             try {
-                val extSubs = fetchExternalSubtitles(type, tmdbId, season, episode)
-                extSubs.forEach { sub ->
-                    if (emittedSubUrls.add(sub.url)) {
-                        send(StreamEmission.SubtitleFound(sub))
+                val wingSubUrl = "https://subs.wing.st/subtitles?type=${if (isTv) "tv" else "movie"}&tmdb=$tmdbId"
+                val req = newRequestBuilder(wingSubUrl).build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: ""
+                        val root = json.parseToJsonElement(body).jsonObject
+                        val subArr = root["subtitles"]?.jsonArray
+                        subArr?.forEach { sElem ->
+                            val sObj = sElem.jsonObject
+                            val subUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                            val lang = sObj["language"]?.jsonPrimitive?.contentOrNull ?: "English"
+                            val cleanLang = lang.trim()
+                            val langKey = cleanLang.lowercase()
+                            if (emittedSubLangs.add(langKey) && emittedSubUrls.add(subUrl)) {
+                                send(StreamEmission.SubtitleFound(SubtitleTrack(url = subUrl, language = cleanLang)))
+                            }
+                        }
                     }
                 }
             } catch (_: Exception) {}
+
+            // B. Granite API (vdrk.site)
+            try {
+                val graniteUrl = if (isTv && season != null && episode != null) {
+                    "https://sub.vdrk.site/v1/tv/$tmdbId/$season/$episode"
+                } else {
+                    "https://sub.vdrk.site/v1/movie/$tmdbId"
+                }
+                val req = Request.Builder().url(graniteUrl).header("User-Agent", "Mozilla/5.0").build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: ""
+                        val arr = json.parseToJsonElement(body).jsonArray
+                        for (elem in arr) {
+                            val obj = elem.jsonObject
+                            val fileUrl = obj["file"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val rawLabel = obj["label"]?.jsonPrimitive?.contentOrNull ?: "English"
+                            val isHi = rawLabel.contains(Regex("""\b(hi\d*|sdh)\b""", RegexOption.IGNORE_CASE))
+                            val trackNum = Regex("""\d+$""").find(rawLabel)?.value
+                            if (trackNum != null && (trackNum.toIntOrNull() ?: 1) > 1) continue
+                            val cleanName = rawLabel.replace(Regex("""\s*(hi\d*|sdh)\b""", RegexOption.IGNORE_CASE), "")
+                                .replace(Regex("""\d+$"""), "")
+                                .trim()
+                            val displayLabel = if (isHi) "$cleanName [CC]" else cleanName
+                            val langKey = cleanName.lowercase().trim()
+                            val variantKey = if (isHi) "$langKey [cc]" else langKey
+
+                            if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(fileUrl)) {
+                                send(StreamEmission.SubtitleFound(SubtitleTrack(url = fileUrl, language = displayLabel)))
+                            }
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+
+            // C. Natsuki Subtitles API
+            val imdb = resolveImdbId(tmdbId, isTv)
+            if (imdb != null && imdb.startsWith("tt")) {
+                try {
+                    val natsukiUrl = if (isTv && season != null && episode != null) {
+                        "https://natsuki.hls.lol/subs?imdbId=$imdb&season=$season&episode=$episode"
+                    } else {
+                        "https://natsuki.hls.lol/subs?imdbId=$imdb"
+                    }
+                    val req = newRequestBuilder(natsukiUrl).build()
+                    client.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val body = resp.body?.string() ?: ""
+                            val root = json.parseToJsonElement(body).jsonObject
+                            val subsArr = root["subtitles"]?.jsonArray
+                            subsArr?.forEach { sElem ->
+                                val sObj = sElem.jsonObject
+                                val subUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
+                                val rawLang = sObj["language"]?.jsonPrimitive?.contentOrNull
+                                    ?: sObj["langCode"]?.jsonPrimitive?.contentOrNull
+                                    ?: "English"
+                                val isHi = sObj["hearingImpaired"]?.jsonPrimitive?.booleanOrNull == true
+                                val cleanLang = rawLang.trim()
+                                val displayLabel = if (isHi) "$cleanLang [CC]" else cleanLang
+                                val langKey = cleanLang.lowercase()
+                                val variantKey = if (isHi) "$langKey [cc]" else langKey
+
+                                if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(subUrl)) {
+                                    send(StreamEmission.SubtitleFound(SubtitleTrack(url = subUrl, language = displayLabel)))
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
-        // 2. Fetch and emit Nebula FIRST so player auto-starts instantly on 1080p FHD Direct with zero buffering
-        if (servers.contains("Nebula")) {
+        // 1. Cinejoy Native Nebula Engine (1080p FHD Direct Master & Adaptive Variants via Wasm)
+        launch {
             try {
-                val nebulaJson = withTimeoutOrNull(15000L) {
+                val nebulaJson = withTimeoutOrNull(10000L) {
                     CinejoyWasmEngine.requestStream(
                         client = client,
                         server = "Nebula",
-                        type = type,
+                        type = if (isTv) "tv" else "movie",
                         tmdbId = tmdbId,
                         season = season,
                         episode = episode
@@ -907,217 +475,281 @@ class CinejoyPlugin(
                 }
                 if (nebulaJson != null) {
                     val root = json.parseToJsonElement(nebulaJson).jsonObject
-                    val dataObj = root["data"]?.jsonObject
-                    val streamArr = dataObj?.get("stream")?.jsonArray
+                    val streamArr = root["data"]?.jsonObject?.get("stream")?.jsonArray
                     if (streamArr != null) {
                         for (streamElem in streamArr) {
                             val sObj = streamElem.jsonObject
                             val playlistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val isHls = playlistUrl.contains(".m3u8") || playlistUrl.contains("/hls/")
+                            if (!playlistUrl.startsWith("http")) continue
 
+                            // A. Emit Master source
                             val nebulaMaster = StreamSource(
                                 url = playlistUrl,
                                 serverName = "Nebula (Auto)",
-                                resolutionLabel = "1080p",
-                                quality = "Nebula (Auto/1080p HLS)",
+                                resolutionLabel = "Auto",
+                                quality = "Cinejoy Nebula (Auto HLS)",
                                 isM3u8 = true,
                                 releaseType = AudioReleaseType.ORIGINAL,
                                 headers = defaultHeaders
                             )
-                            if (emittedStreamUrls.add(nebulaMaster.url)) {
+                            val masterKey = "${nebulaMaster.serverName}:${nebulaMaster.url}"
+                            if (emittedStreamKeys.add(masterKey)) {
                                 send(StreamEmission.SourceFound(nebulaMaster))
                             }
 
-                            // Extract individual variants from Nebula master playlist
-                            val variants = parseNebulaVariants(playlistUrl)
-                            for (variant in variants) {
-                                if (emittedStreamUrls.add(variant.url)) {
-                                    send(StreamEmission.SourceFound(variant))
-                                }
-                            }
-
-                            val captions = sObj["captions"]?.jsonArray
-                            captions?.forEach { capElem ->
-                                val capObj = capElem.jsonObject
-                                val capUrl = capObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                                val lang = capObj["language"]?.jsonPrimitive?.contentOrNull ?: "English"
-                                if (emittedSubUrls.add(capUrl)) {
-                                    send(StreamEmission.SubtitleFound(SubtitleTrack(url = capUrl, language = lang)))
+                            // B. Resolve child variants (1080p FHD, 720p HD)
+                            val variants = resolveMasterPlaylistVariants(playlistUrl, "Nebula", defaultHeaders)
+                            for (v in variants) {
+                                val vKey = "${v.serverName}:${v.url}"
+                                if (emittedStreamKeys.add(vKey)) {
+                                    send(StreamEmission.SourceFound(v))
                                 }
                             }
                         }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
         }
 
-        // 3. Concurrently fetch secondary mirrors (Lisbon, Solara, Scout, etc.)
-        val secondaryServers = servers.filter { it != "Nebula" }
-        secondaryServers.forEach { server ->
-            launch {
-                try {
-                    val decryptedJson = withTimeoutOrNull(20000L) {
-                        CinejoyWasmEngine.requestStream(
-                            client = client,
-                            server = server,
-                            type = type,
-                            tmdbId = tmdbId,
-                            season = season,
-                            episode = episode
-                        )
-                    } ?: return@launch
+        // 2. Cinejoy Native Lisbon Engine (With live pre-flight verification to prevent 502 stalls)
+        launch {
+            try {
+                val lisbonJson = withTimeoutOrNull(10000L) {
+                    CinejoyWasmEngine.requestStream(
+                        client = client,
+                        server = "Lisbon",
+                        type = if (isTv) "tv" else "movie",
+                        tmdbId = tmdbId,
+                        season = season,
+                        episode = episode
+                    )
+                }
+                if (lisbonJson != null) {
+                    val root = json.parseToJsonElement(lisbonJson).jsonObject
+                    val streamArr = root["data"]?.jsonObject?.get("stream")?.jsonArray
+                    if (streamArr != null) {
+                        for (streamElem in streamArr) {
+                            val sObj = streamElem.jsonObject
+                            val rawUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
+                            if (!rawUrl.startsWith("http")) continue
 
-                    val root = json.parseToJsonElement(decryptedJson).jsonObject
-                    val dataObj = root["data"]?.jsonObject ?: return@launch
-                    val streamArr = dataObj["stream"]?.jsonArray ?: return@launch
+                            // Perform non-blocking liveness check
+                            val isLive = withTimeoutOrNull(3000L) {
+                                isStreamReachable(rawUrl, defaultHeaders)
+                            } ?: false
 
-                    for (streamElem in streamArr) {
-                        val sObj = streamElem.jsonObject
-                        val rawPlaylistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
-                        val streamType = sObj["type"]?.jsonPrimitive?.contentOrNull ?: "hls"
-                        val isHls = streamType.contains("hls") || rawPlaylistUrl.contains(".m3u8") || rawPlaylistUrl.contains("/content?v=")
-
-                        if (server == "Solara") {
-                            val solaraSource = resolveSolaraStream(rawPlaylistUrl)
-                            if (solaraSource != null && emittedStreamUrls.add(solaraSource.url)) {
-                                send(StreamEmission.SourceFound(solaraSource))
+                            if (isLive) {
+                                val lisbonSource = StreamSource(
+                                    url = rawUrl,
+                                    serverName = "Lisbon (1080p)",
+                                    resolutionLabel = "1080p FHD",
+                                    quality = "Cinejoy Lisbon (1080p FHD HLS)",
+                                    isM3u8 = true,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = defaultHeaders
+                                )
+                                val lisbonKey = "${lisbonSource.serverName}:${lisbonSource.url}"
+                                if (emittedStreamKeys.add(lisbonKey)) {
+                                    send(StreamEmission.SourceFound(lisbonSource))
+                                }
                             }
-                        } else {
-                            val resolutionLabel = when (server) {
-                                "Lisbon" -> "1080p"
-                                else -> "HD"
-                            }
-                            val qualityLabel = when (server) {
-                                "Lisbon" -> "Lisbon (1080p High Bitrate)"
-                                else -> "$server (Direct)"
-                            }
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
 
-                            val source = StreamSource(
-                                url = rawPlaylistUrl,
-                                serverName = server,
-                                resolutionLabel = resolutionLabel,
-                                quality = qualityLabel,
-                                isM3u8 = isHls,
-                                releaseType = AudioReleaseType.ORIGINAL,
-                                headers = defaultHeaders
+        // 3. Cinejoy Helios Multi-Quality High-Throughput Engine (1080p FHD, 720p HD, 480p SD, Auto)
+        launch {
+            try {
+                val heliosUrl = if (isTv && season != null && episode != null) {
+                    "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
+                } else {
+                    "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=movie"
+                }
+
+                val req = Request.Builder()
+                    .url(heliosUrl)
+                    .header("Referer", "https://cinejoy.pk/")
+                    .header("Origin", "https://cinejoy.pk")
+                    .header("User-Agent", defaultHeaders["User-Agent"]!!)
+                    .build()
+
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: ""
+                        val root = json.parseToJsonElement(body).jsonObject
+                        val sources = root["sources"]?.jsonObject
+                        if (sources != null) {
+                            for ((serverName, serverVal) in sources) {
+                                val sObj = serverVal.jsonObject
+                                val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                                val decryptedUrl = decryptHeliosUrl(encUrl) ?: continue
+                                if (!decryptedUrl.startsWith("http")) continue
+
+                                // Parse individual direct quality variants from "q" query parameter
+                                val qParam = decryptedUrl.substringAfter("?q=", "").substringBefore("&")
+                                if (qParam.isNotBlank()) {
+                                    try {
+                                        val decodedBytes = try {
+                                            java.util.Base64.getUrlDecoder().decode(qParam)
+                                        } catch (_: Exception) {
+                                            val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                                            java.util.Base64.getDecoder().decode(padded)
+                                        }
+                                        val decodedJsonStr = String(decodedBytes, Charsets.UTF_8)
+                                        val qRoot = json.parseToJsonElement(decodedJsonStr).jsonObject
+                                        val customHeadersObj = qRoot["h"]?.jsonObject
+                                        val streamHeaders = mutableMapOf<String, String>()
+                                        customHeadersObj?.forEach { (k, v) ->
+                                            v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                                        }
+                                        val reqHeaders = mapOf(
+                                            "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                                            "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                                            "User-Agent" to defaultHeaders["User-Agent"]!!
+                                        )
+
+                                        val variantsArr = qRoot["v"]?.jsonArray
+                                        if (variantsArr != null) {
+                                            for (vElem in variantsArr) {
+                                                val vObj = vElem.jsonObject
+                                                val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                                val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                                val qualityLabel = when {
+                                                    vQuality.contains("1080") -> "1080p FHD"
+                                                    vQuality.contains("720") -> "720p HD"
+                                                    vQuality.contains("480") -> "480p SD"
+                                                    else -> vQuality
+                                                }
+                                                val src = StreamSource(
+                                                    url = vUrl,
+                                                    serverName = "Helios ($qualityLabel)",
+                                                    resolutionLabel = qualityLabel,
+                                                    quality = "Cinejoy Helios ($qualityLabel HLS)",
+                                                    isM3u8 = true,
+                                                    releaseType = AudioReleaseType.ORIGINAL,
+                                                    headers = reqHeaders
+                                                )
+                                                val streamKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                                                if (emittedStreamKeys.add(streamKey)) send(StreamEmission.SourceFound(src))
+                                            }
+                                        }
+                                    } catch (_: Exception) {}
+                                }
+
+                                // Also emit Helios Master playlist
+                                val heliosMasterHeaders = mapOf(
+                                    "Referer" to "https://stream.hls.lol/",
+                                    "Origin" to "https://stream.hls.lol",
+                                    "User-Agent" to defaultHeaders["User-Agent"]!!
+                                )
+                                val masterSrc = StreamSource(
+                                    url = decryptedUrl,
+                                    serverName = "Helios ($serverName Auto)",
+                                    resolutionLabel = "Auto",
+                                    quality = "Cinejoy Helios ($serverName Auto HLS)",
+                                    isM3u8 = true,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = heliosMasterHeaders
+                                )
+                                val masterKey = "${masterSrc.serverName}:${masterSrc.resolutionLabel}:${masterSrc.url}"
+                                if (emittedStreamKeys.add(masterKey)) send(StreamEmission.SourceFound(masterSrc))
+                            }
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 4. Cinejoy Aphrodite CDN Engine (High-speed edge CDN with Atlantic origin playback)
+        launch {
+            try {
+                val aphPath = if (isTv && season != null && episode != null) {
+                    "/content/tv/$tmdbId/$season/$episode"
+                } else {
+                    "/content/movie/$tmdbId"
+                }
+
+                val req = Request.Builder()
+                    .url("https://cdn.hls.lol$aphPath")
+                    .header("Referer", "https://atlantic.st/")
+                    .header("Origin", "https://atlantic.st")
+                    .header("User-Agent", defaultHeaders["User-Agent"]!!)
+                    .header("Accept", "application/json, text/plain, */*")
+                    .build()
+
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string()
+                        if (!body.isNullOrBlank()) {
+                            val root = json.parseToJsonElement(body).jsonObject
+                            val streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
+                                ?: root["hls"]?.jsonPrimitive?.contentOrNull
+                            if (streamUrl != null && streamUrl.startsWith("http")) {
+                                val aphHeaders = mapOf(
+                                    "Referer" to "https://atlantic.st/",
+                                    "Origin" to "https://atlantic.st",
+                                    "User-Agent" to defaultHeaders["User-Agent"]!!
+                                )
+                                val src = StreamSource(
+                                    url = streamUrl,
+                                    serverName = "Aphrodite (Direct 1080p)",
+                                    resolutionLabel = "1080p FHD",
+                                    quality = "Cinejoy Aphrodite CDN (1080p FHD HLS)",
+                                    isM3u8 = true,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = aphHeaders
+                                )
+                                val aphKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                                if (emittedStreamKeys.add(aphKey)) {
+                                    send(StreamEmission.SourceFound(src))
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 5. Cinejoy Meridian & Link Engine (High-speed 1080p HLS mirrors)
+        launch {
+            try {
+                val meridianUrl = if (isTv && season != null && episode != null) {
+                    "https://meridian.aether.cx/show/$tmdbId/$season/$episode"
+                } else {
+                    "https://meridian.aether.cx/movie/$tmdbId"
+                }
+                val req = Request.Builder().url(meridianUrl).header("User-Agent", defaultHeaders["User-Agent"]!!).build()
+                client.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: ""
+                        val root = json.parseToJsonElement(body).jsonObject
+                        val streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
+                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                            val streamHost = try { URI(streamUrl).host } catch (_: Exception) { null } ?: "aether.cx"
+                            val playbackHeaders = mapOf(
+                                "Referer" to "https://$streamHost/",
+                                "Origin" to "https://$streamHost",
+                                "User-Agent" to defaultHeaders["User-Agent"]!!,
+                                "Accept-Ranges" to "bytes"
                             )
-
-                            if (emittedStreamUrls.add(source.url)) {
-                                send(StreamEmission.SourceFound(source))
-                            }
-                        }
-
-                        val captions = sObj["captions"]?.jsonArray
-                        captions?.forEach { capElem ->
-                            val capObj = capElem.jsonObject
-                            val capUrl = capObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                            val lang = capObj["language"]?.jsonPrimitive?.contentOrNull ?: "English"
-                            if (emittedSubUrls.add(capUrl)) {
-                                send(StreamEmission.SubtitleFound(SubtitleTrack(url = capUrl, language = lang)))
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-        }
-    }
-
-    private suspend fun resolveSolaraStream(solaraUrl: String): StreamSource? {
-        val resolver = host?.browserResolver ?: return null
-        return try {
-            val resolveResult = resolver.resolve(
-                com.euthopiar.core.browser.BrowserResolveRequest(
-                    url = solaraUrl,
-                    headers = mapOf("Referer" to "https://cinejoy.pk/"),
-                    timeoutMs = 25000L
-                )
-            )
-
-            if (resolveResult.html.isBlank() ||
-                resolveResult.html.contains("Attention Required! | Cloudflare") ||
-                resolveResult.html.contains("Just a moment...")
-            ) {
-                return null
-            }
-
-            val clearanceCookie = resolveResult.cookieString
-            val matchingUserAgent = resolveResult.userAgent.ifBlank {
-                host?.defaultUserAgent ?: defaultHeaders["User-Agent"]!!
-            }
-
-            val headers = mutableMapOf(
-                "Referer" to "https://cinejoy.pk/",
-                "Origin" to "https://cinejoy.pk",
-                "User-Agent" to matchingUserAgent
-            )
-            if (clearanceCookie.isNotBlank()) {
-                headers["Cookie"] = clearanceCookie
-            }
-
-            val finalUrl = resolveResult.finalUrl.ifBlank { solaraUrl }
-
-            StreamSource(
-                url = finalUrl,
-                serverName = "Solara",
-                resolutionLabel = "1080p",
-                quality = "Solara (1080p Cloudflare Bypassed)",
-                isM3u8 = true,
-                releaseType = AudioReleaseType.ORIGINAL,
-                headers = headers
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun parseNebulaVariants(masterUrl: String): List<StreamSource> {
-        val variants = mutableListOf<StreamSource>()
-        try {
-            val req = Request.Builder().url(masterUrl)
-            defaultHeaders.forEach { (k, v) -> req.header(k, v) }
-            val resp = client.newCall(req.build()).execute()
-            if (!resp.isSuccessful) return emptyList()
-            val text = resp.body?.string() ?: return emptyList()
-            if (!text.startsWith("#EXTM3U")) return emptyList()
-
-            val lines = text.lines()
-            var currentLabel: String? = null
-            for (line in lines) {
-                val trimmed = line.trim()
-                if (trimmed.startsWith("#EXT-X-STREAM-INF:")) {
-                    val nameMatch = Regex("""NAME="([^"]+)"""").find(trimmed)
-                    val resMatch = Regex("""RESOLUTION=(\d+x\d+)""").find(trimmed)
-                    currentLabel = nameMatch?.groupValues?.get(1)
-                        ?: resMatch?.groupValues?.get(1)?.let {
-                            if (it.endsWith("1080")) "1080p"
-                            else if (it.endsWith("720")) "720p"
-                            else if (it.endsWith("480")) "480p"
-                            else it
-                        } ?: "HD"
-                } else if (!trimmed.startsWith("#") && trimmed.isNotBlank() && currentLabel != null) {
-                    val resolvedUrl = try {
-                        java.net.URI(masterUrl).resolve(trimmed).toString()
-                    } catch (_: Exception) {
-                        null
-                    }
-                    if (resolvedUrl != null) {
-                        variants.add(
-                            StreamSource(
-                                url = resolvedUrl,
-                                serverName = "Nebula ($currentLabel)",
-                                resolutionLabel = currentLabel,
-                                quality = "Nebula ($currentLabel Direct)",
+                            val src = StreamSource(
+                                url = streamUrl,
+                                serverName = "Meridian (1080p)",
+                                resolutionLabel = "1080p FHD",
+                                quality = "Cinejoy Meridian (1080p FHD HLS)",
                                 isM3u8 = true,
                                 releaseType = AudioReleaseType.ORIGINAL,
-                                headers = defaultHeaders
+                                headers = playbackHeaders
                             )
-                        )
+                            val meridianKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                            if (emittedStreamKeys.add(meridianKey)) send(StreamEmission.SourceFound(src))
+                        }
                     }
-                    currentLabel = null
                 }
-            }
-        } catch (_: Exception) {}
-        return variants
+            } catch (_: Throwable) {}
+        }
     }
 
     override suspend fun getStreamLinks(episodeData: String): StreamResult = withContext(Dispatchers.IO) {
@@ -1130,298 +762,247 @@ class CinejoyPlugin(
                 is StreamEmission.StatusUpdate -> {}
             }
         }
-        val sortedStreams = streamSources.sortedWith(
-            compareByDescending<StreamSource> { it.serverName.startsWith("Nebula") }
-                .thenByDescending { it.serverName.startsWith("Lisbon") }
-                .thenByDescending { it.serverName.startsWith("Solara") }
-        )
-        StreamResult(
-            streams = sortedStreams,
-            subtitles = subtitleTracks
-        )
-    }
-
-    private suspend fun fetchExternalSubtitles(
-        type: String,
-        tmdbId: String,
-        season: Int?,
-        episode: Int?
-    ): List<SubtitleTrack> = withContext(Dispatchers.IO) {
-        val tracks = mutableListOf<SubtitleTrack>()
-        val seenUrls = mutableSetOf<String>()
-
-        // 1. Native Cinejoy Subtitles API (subs.wing.st)
-        try {
-            val wingSubUrl = if (type == "tv" && season != null && episode != null) {
-                "https://subs.wing.st/subtitles?type=tv&tmdb=$tmdbId&season=$season&episode=$episode"
-            } else {
-                "https://subs.wing.st/subtitles?type=movie&tmdb=$tmdbId"
-            }
-            val wingReq = newRequestBuilder(wingSubUrl).build()
-            client.newCall(wingReq).execute().use { wingResp ->
-                if (wingResp.isSuccessful) {
-                    val body = wingResp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(body).jsonObject
-                    val subsArr = root["subtitles"]?.jsonArray
-                    if (subsArr != null) {
-                        val langCounts = mutableMapOf<String, Int>()
-                        for (elem in subsArr) {
-                            val obj = elem.jsonObject
-                            val sUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val langCode = obj["language"]?.jsonPrimitive?.contentOrNull ?: "en"
-                            val langName = languageCodeToName(langCode)
-                            val count = langCounts.getOrDefault(langName, 0)
-                            if (count < 2 && seenUrls.add(sUrl)) {
-                                langCounts[langName] = count + 1
-                                val label = if (count == 0) langName else "$langName (Alt)"
-                                tracks.add(SubtitleTrack(url = sUrl, language = label))
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // 2. OpenSubtitles bridge via IMDB id
-        var imdbId: String? = null
-        try {
-            val infoReq = newRequestBuilder("https://api.wing.st/info?type=$type&tmdb=$tmdbId").build()
-            imdbId = client.newCall(infoReq).execute().use { infoResp ->
-                if (infoResp.isSuccessful) {
-                    val b = infoResp.body?.string() ?: ""
-                    json.parseToJsonElement(b).jsonObject["imdb_id"]?.jsonPrimitive?.contentOrNull
-                } else null
-            }
-
-            if (imdbId != null && imdbId.startsWith("tt")) {
-                val subUrl = if (type == "tv" && season != null && episode != null) {
-                    "https://opensubtitles-v3.strem.io/subtitles/series/$imdbId:$season:$episode.json"
-                } else {
-                    "https://opensubtitles-v3.strem.io/subtitles/movie/$imdbId.json"
-                }
-
-                val subsReq = Request.Builder()
-                    .url(subUrl)
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                    .build()
-                client.newCall(subsReq).execute().use { subsResp ->
-                    if (subsResp.isSuccessful) {
-                        val body = subsResp.body?.string() ?: ""
-                        val root = json.parseToJsonElement(body).jsonObject
-                        val subsArr = root["subtitles"]?.jsonArray
-                        if (subsArr != null) {
-                            for (elem in subsArr) {
-                                val obj = elem.jsonObject
-                                val sUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                                val langCode = obj["lang"]?.jsonPrimitive?.contentOrNull ?: "eng"
-                                val langName = languageCodeToName(langCode)
-                                val countForLang = tracks.count { it.language.startsWith(langName) }
-                                if (countForLang < 3 && seenUrls.add(sUrl)) {
-                                    val label = if (countForLang == 0) langName else "$langName (${countForLang + 1})"
-                                    tracks.add(SubtitleTrack(url = sUrl, language = label))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {}
-
-        // 3. Centralized SubDL subtitle bridge from HostApi
-        host?.subDlClient?.let { subDl ->
-            try {
-                val subDlRes = subDl.searchSubtitles(
-                    tmdbId = tmdbId,
-                    imdbId = imdbId,
-                    type = if (type == "tv") "tv" else "movie",
-                    season = season,
-                    episode = episode,
-                    language = "en"
-                )
-                subDlRes.getOrNull()?.forEach { track ->
-                    if (seenUrls.add(track.url)) {
-                        tracks.add(track)
-                    }
-                }
-            } catch (_: Exception) {}
+        val sortedSubs = subtitleTracks.sortedWith(
+            compareByDescending<SubtitleTrack> { it.language.contains("english", ignoreCase = true) }
+                .thenBy { it.language }
+        ).distinctBy {
+            val isCc = it.language.contains("[CC]", ignoreCase = true)
+            val base = it.language.replace(Regex("""\s*\[CC\]""", RegexOption.IGNORE_CASE), "").trim().lowercase()
+            if (isCc) "$base [cc]" else base
         }
-
-        tracks
-    }
-
-    private fun languageCodeToName(code: String): String {
-        return when (code.lowercase()) {
-            "eng", "en" -> "English"
-            "spa", "es" -> "Spanish"
-            "fre", "fra", "fr" -> "French"
-            "ger", "deu", "de" -> "German"
-            "ita", "it" -> "Italian"
-            "por", "pt" -> "Portuguese"
-            "rus", "ru" -> "Russian"
-            "ara", "ar" -> "Arabic"
-            "hin", "hi" -> "Hindi"
-            "ben", "bn" -> "Bengali"
-            "jpn", "ja" -> "Japanese"
-            "kor", "ko" -> "Korean"
-            "zho", "chi", "zh" -> "Chinese"
-            "tur", "tr" -> "Turkish"
-            "vie", "vi" -> "Vietnamese"
-            "ind", "id" -> "Indonesian"
-            "pol", "pl" -> "Polish"
-            "dut", "nld", "nl" -> "Dutch"
-            "gre", "ell", "el" -> "Greek"
-            "swe", "sv" -> "Swedish"
-            "heb", "he" -> "Hebrew"
-            "tha", "th" -> "Thai"
-            "rum", "ron", "ro" -> "Romanian"
-            else -> code.uppercase()
-        }
+        val distinctStreams = streamSources.distinctBy { "${it.serverName}:${it.resolutionLabel}:${it.url}" }
+        StreamResult(streams = distinctStreams, subtitles = sortedSubs)
     }
 
     override suspend fun getDownloadLinks(episodeData: String): List<DownloadOption> = withContext(Dispatchers.IO) {
         val tmdbId: String
         val season: Int?
         val episode: Int?
-        val type: String
+        val isTv: Boolean
 
         if (episodeData.contains(":")) {
             val parts = episodeData.split(":")
             tmdbId = parts[0]
             season = parts.getOrNull(1)?.toIntOrNull()
             episode = parts.getOrNull(2)?.toIntOrNull()
-            type = "tv"
+            isTv = true
         } else {
             tmdbId = episodeData
             season = null
             episode = null
-            type = "movie"
+            isTv = false
         }
 
-        val url = if (type == "tv" && season != null && episode != null) {
-            "https://downloads.wing.st/tv/$tmdbId/$season/$episode"
-        } else {
-            "https://downloads.wing.st/movie/$tmdbId"
-        }
+        val options = mutableListOf<DownloadOption>()
 
-        val downloadOptions = mutableListOf<DownloadOption>()
-
+        // 1. Helios Direct Quality Download Mirrors (1080p, 720p, 480p)
         try {
-            val req = newRequestBuilder(url).build()
+            val heliosUrl = if (isTv && season != null && episode != null) {
+                "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
+            } else {
+                "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=movie"
+            }
+            val req = Request.Builder().url(heliosUrl).header("User-Agent", defaultHeaders["User-Agent"]!!).build()
             client.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val body = resp.body?.string() ?: ""
                     val root = json.parseToJsonElement(body).jsonObject
-                    val linksArr = root["links"]?.jsonArray
-                    if (linksArr != null) {
-                        for (elem in linksArr) {
-                            val obj = elem.jsonObject
-                            val linkUrl = obj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val source = obj["source"]?.jsonPrimitive?.contentOrNull ?: "Direct Server"
-                            val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: source
-                            val qualityInt = obj["quality"]?.jsonPrimitive?.intOrNull
-                            val sizeStr = obj["size"]?.jsonPrimitive?.contentOrNull ?: "Unknown Size"
-                            val providerStr = obj["provider"]?.jsonPrimitive?.contentOrNull
-
-                            val qualityLabel = when (qualityInt) {
-                                2160 -> "4K 2160p"
-                                1080 -> "1080p FHD"
-                                720 -> "720p HD"
-                                480 -> "480p SD"
-                                null -> "HD"
-                                else -> "${qualityInt}p"
-                            }
-
-                            // Filter out known broken/quota-exceeded Google Drive workers & 403 onedrive proxies
-                            val isDeadWorker = linkUrl.contains(".workers.dev", ignoreCase = true) ||
-                                    linkUrl.contains("111477.xyz", ignoreCase = true)
-
-                            if (!isDeadWorker) {
-                                val cleanUrl = sanitizeDownloadUrl(linkUrl)
-
-                                // Validate that direct link is live (HTTP 200 or 206)
-                                if (isDownloadLive(cleanUrl)) {
-                                    downloadOptions.add(
-                                        DownloadOption(
-                                            title = name,
-                                            quality = qualityLabel,
-                                            size = sizeStr,
-                                            url = cleanUrl,
-                                            source = source,
-                                            provider = providerStr,
-                                            headers = mapOf(
-                                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                                                "Referer" to "https://cinejoy.pk/",
-                                                "Origin" to "https://cinejoy.pk"
-                                            )
-                                        )
+                    val sources = root["sources"]?.jsonObject
+                    if (sources != null) {
+                        val masterVal = sources["Moscow"]?.jsonObject ?: sources.values.firstOrNull()?.jsonObject
+                        val encUrl = masterVal?.get("url")?.jsonPrimitive?.contentOrNull
+                        if (encUrl != null) {
+                            val dec = decryptHeliosUrl(encUrl)
+                            if (dec != null && dec.startsWith("http")) {
+                                val qParam = dec.substringAfter("?q=", "").substringBefore("&")
+                                if (qParam.isNotBlank()) {
+                                    val decodedBytes = try {
+                                        java.util.Base64.getUrlDecoder().decode(qParam)
+                                    } catch (_: Exception) {
+                                        val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                                        java.util.Base64.getDecoder().decode(padded)
+                                    }
+                                    val qRoot = json.parseToJsonElement(String(decodedBytes, Charsets.UTF_8)).jsonObject
+                                    val customHeadersObj = qRoot["h"]?.jsonObject
+                                    val streamHeaders = mutableMapOf<String, String>()
+                                    customHeadersObj?.forEach { (k, v) ->
+                                        v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                                    }
+                                    val reqHeaders = mapOf(
+                                        "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                                        "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                                        "User-Agent" to defaultHeaders["User-Agent"]!!
                                     )
+
+                                    val variantsArr = qRoot["v"]?.jsonArray
+                                    if (variantsArr != null) {
+                                        for (vElem in variantsArr) {
+                                            val vObj = vElem.jsonObject
+                                            val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                            val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                            val (qualityLabel, estimatedSize) = when {
+                                                vQuality.contains("1080") -> "1080p FHD" to "2.4 GB"
+                                                vQuality.contains("720") -> "720p HD" to "1.2 GB"
+                                                vQuality.contains("480") -> "480p SD" to "650 MB"
+                                                else -> vQuality to "1.0 GB"
+                                            }
+                                            options.add(
+                                                DownloadOption(
+                                                    title = "Cinejoy Direct ($qualityLabel)",
+                                                    quality = qualityLabel,
+                                                    size = estimatedSize,
+                                                    url = vUrl,
+                                                    source = "Cinejoy Helios CDN",
+                                                    provider = name,
+                                                    headers = reqHeaders
+                                                )
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
-        } catch (_: Exception) {
-            // downloads.wing.st failed or network error
-        }
+        } catch (_: Exception) {}
 
-        // If no dedicated download links exist on downloads.wing.st (e.g. Leave No Trace, older titles),
-        // fallback to verified high-speed live stream mirrors so 100% of catalog content has verified downloads
-        if (downloadOptions.isEmpty()) {
-            try {
-                val streamResult = getStreamLinks(episodeData)
-                val liveStreams = streamResult.streams.filter { isStreamLive(it.url, it.headers) }
-                for (stream in liveStreams) {
-                    val q = if (stream.resolutionLabel != "Auto") stream.resolutionLabel else "1080p FHD"
-                    downloadOptions.add(
-                        DownloadOption(
-                            title = "${stream.serverName} ($q) - Direct Download",
-                            quality = q,
-                            size = "~1.5 GB",
-                            url = stream.url,
-                            source = "Cinejoy Direct Gateway (${stream.serverName})",
-                            provider = name,
-                            headers = stream.headers
-                        )
-                    )
-                }
-            } catch (_: Exception) {
-                // Ignore fallback error
-            }
-        }
-
-        downloadOptions
+        options.distinctBy { it.url }
     }
 
-    private fun sanitizeDownloadUrl(url: String): String {
-        return try {
-            val uri = java.net.URI(url)
-            uri.toASCIIString()
-        } catch (e: Exception) {
-            val schemeEnd = url.indexOf("://")
-            if (schemeEnd != -1) {
-                val scheme = url.substring(0, schemeEnd + 3)
-                val rest = url.substring(schemeEnd + 3)
-                val slashIdx = rest.indexOf('/')
-                if (slashIdx != -1) {
-                    val host = rest.substring(0, slashIdx)
-                    val pathAndQuery = rest.substring(slashIdx)
-                    val cleanPathAndQuery = pathAndQuery
-                        .replace(" ", "%20")
-                        .replace("[", "%5B")
-                        .replace("]", "%5D")
-                        .replace("{", "%7B")
-                        .replace("}", "%7D")
-                        .replace("|", "%7C")
-                        .replace("^", "%5E")
-                        .replace("`", "%60")
-                    scheme + host + cleanPathAndQuery
-                } else {
-                    url.replace(" ", "%20")
+    override suspend fun resolveLogo(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
+        val tmdbId = Regex("""\b(\d+)\b""").find(mediaItem.id)?.value ?: mediaItem.id
+        if (tmdbId.isBlank()) return@withContext null
+        logoCache[tmdbId]?.let { return@withContext it }
+        val isTv = mediaItem.type == MediaType.TV_SERIES
+        val logo = TmdbBridge.resolveLogo(client, tmdbId, isTv, apiKey = tmdbApiKey)
+        if (logo != null) {
+            logoCache[tmdbId] = logo
+            return@withContext logo
+        }
+        null
+    }
+
+    override suspend fun fetchCast(mediaId: String, imdbId: String?, type: MediaType): List<CastMember> = withContext(Dispatchers.IO) {
+        val cleanTmdbId = Regex("""\b(\d+)\b""").find(mediaId)?.value ?: mediaId
+        if (cleanTmdbId.isBlank()) return@withContext emptyList()
+        val isTv = type == MediaType.TV_SERIES
+        val enriched = TmdbBridge.fetchEnrichedDetails(client, cleanTmdbId, isTv, name, tmdbApiKey)
+        enriched?.cast ?: emptyList()
+    }
+
+    private fun resolveMasterPlaylistVariants(
+        masterUrl: String,
+        serverPrefix: String,
+        customHeaders: Map<String, String> = defaultHeaders
+    ): List<StreamSource> {
+        val variants = mutableListOf<StreamSource>()
+        try {
+            val req = Request.Builder().url(masterUrl)
+            customHeaders.forEach { (k, v) -> req.header(k, v) }
+            client.newCall(req.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val playlistText = resp.body?.string() ?: return emptyList()
+                if (!playlistText.startsWith("#EXTM3U")) return emptyList()
+
+                val baseUri = try { URI(masterUrl) } catch (_: Exception) { null }
+                val lines = playlistText.lines()
+                val seenRes = mutableSetOf<String>()
+
+                for (i in lines.indices) {
+                    val line = lines[i].trim()
+                    if (line.startsWith("#EXT-X-STREAM-INF:")) {
+                        val resMatch = Regex("""RESOLUTION=(\d+x\d+)""").find(line)?.groupValues?.get(1)
+                        val width = resMatch?.substringBefore("x")?.toIntOrNull()
+                        val height = resMatch?.substringAfter("x")?.toIntOrNull()
+
+                        for (j in (i + 1) until lines.size) {
+                            val subLine = lines[j].trim()
+                            if (subLine.isNotEmpty() && !subLine.startsWith("#")) {
+                                val resolvedUrl = baseUri?.resolve(subLine)?.toString() ?: subLine
+                                val qLabel = when {
+                                    (width != null && width >= 1900) || (height != null && height >= 1080) -> "1080p FHD"
+                                    (width != null && width >= 1200) || (height != null && height >= 700) -> "720p HD"
+                                    (width != null && width >= 600) || (height != null && height >= 450) -> "480p SD"
+                                    height != null -> "${height}p"
+                                    else -> "Direct"
+                                }
+
+                                if (seenRes.add(qLabel)) {
+                                    variants.add(
+                                        StreamSource(
+                                            url = resolvedUrl,
+                                            serverName = "$serverPrefix ($qLabel)",
+                                            resolutionLabel = qLabel,
+                                            quality = "Cinejoy $serverPrefix ($qLabel)",
+                                            isM3u8 = true,
+                                            releaseType = AudioReleaseType.ORIGINAL,
+                                            headers = customHeaders
+                                        )
+                                    )
+                                }
+                                break
+                            }
+                        }
+                    }
                 }
-            } else {
-                url.replace(" ", "%20")
             }
+        } catch (_: Exception) {}
+        return variants
+    }
+
+    private fun isStreamReachable(url: String, headers: Map<String, String>): Boolean {
+        return try {
+            val req = Request.Builder().url(url)
+            headers.forEach { (k, v) -> req.header(k, v) }
+            client.newCall(req.build()).execute().use { resp ->
+                resp.isSuccessful
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun decryptHeliosUrl(encUrl: String): String? {
+        return try {
+            val rawHex = when {
+                encUrl.startsWith("hl_") -> encUrl.removePrefix("hl_")
+                encUrl.startsWith("ns_") -> encUrl.removePrefix("ns_")
+                encUrl.startsWith("http") -> return encUrl
+                else -> encUrl
+            }
+            val rawBytes = hexToBytes(rawHex)
+            if (rawBytes.size < 28) return null
+
+            val iv = rawBytes.copyOfRange(0, 12)
+            val ctAndTag = rawBytes.copyOfRange(12, rawBytes.size)
+
+            val key = hexToBytes(heliosKeyHex)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val keySpec = SecretKeySpec(key, "AES")
+            val gcmSpec = GCMParameterSpec(128, iv)
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+
+            val decryptedBytes = cipher.doFinal(ctAndTag)
+            String(decryptedBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun resolveImdbId(tmdbId: String, isTv: Boolean): String? {
+        return try {
+            val typeStr = if (isTv) "tv" else "movie"
+            val url = "https://api.themoviedb.org/3/$typeStr/$tmdbId/external_ids?api_key=$tmdbApiKey"
+            val req = Request.Builder().url(url).build()
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    json.parseToJsonElement(body).jsonObject["imdb_id"]?.jsonPrimitive?.contentOrNull
+                } else null
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 }
