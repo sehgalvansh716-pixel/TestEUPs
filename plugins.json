@@ -22,7 +22,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 52894
+      "fileSize": 52894,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "uhdmovies",
@@ -43,7 +45,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 49838
+      "fileSize": 49838,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "moviesleech",
@@ -64,7 +68,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 55076
+      "fileSize": 55076,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "movy",
@@ -85,7 +91,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 42985
+      "fileSize": 42985,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "pvrplay",
@@ -106,7 +114,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 36060
+      "fileSize": 36060,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "cinejoy",
@@ -127,7 +137,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 102472
+      "fileSize": 102472,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "aether",
@@ -148,7 +160,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 49609
+      "fileSize": 49609,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "1shows",
@@ -169,7 +183,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 72303
+      "fileSize": 72303,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "4khdhub",
@@ -190,7 +206,9 @@
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 61659
+      "fileSize": 61659,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "hqporner",
@@ -207,11 +225,11 @@
       "sha256": "4d6d96663933089af89b4a7fe042bce02ca7929994faf6acffd24f2ad7dded31",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
+        "ADULT"
       ],
-      "fileSize": 15130
+      "fileSize": 15130,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "xvideos",
@@ -228,11 +246,11 @@
       "sha256": "2db1f2482840aaaa6c7a6f3b1d9c1851736146afea45b615089385435dade071",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
+        "ADULT"
       ],
-      "fileSize": 16814
+      "fileSize": 16814,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "eporner",
@@ -249,11 +267,11 @@
       "sha256": "0ee1451bcba8e7eac96402bda4807ff58b845da7bc3f2b98602144cd29c4ddac",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
+        "ADULT"
       ],
-      "fileSize": 18466
+      "fileSize": 18466,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "rule34video",
@@ -270,11 +288,11 @@
       "sha256": "774163f8729c27ecb3858edbec1632f4d92d57d0da835ed0afcbd95fd55377da",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
+        "ADULT"
       ],
-      "fileSize": 12430
+      "fileSize": 12430,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "beeg",
@@ -291,11 +309,11 @@
       "sha256": "96e209e4117748a00fce493cc6fa141c8ec219b4c20f9810488e8741447da882",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
+        "ADULT"
       ],
-      "fileSize": 15837
+      "fileSize": 15837,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "faphouse",
@@ -312,11 +330,11 @@
       "sha256": "d49f65de403287826b885868748265b2d9e63c6290e4d21aa5581f2cc1b1848b",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
+        "ADULT"
       ],
-      "fileSize": 15836
+      "fileSize": 15836,
+      "isAdult": true,
+      "isVault": true
     }
   ]
 }
