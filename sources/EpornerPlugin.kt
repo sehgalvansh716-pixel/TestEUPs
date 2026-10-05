@@ -1,8 +1,8 @@
-﻿package com.euthopiar.core.provider
+package com.euthopiar.core.provider
 
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -43,12 +43,12 @@ class EpornerPlugin(
     }).build()
 ) : UniversalPlugin {
 
+    constructor() : this(DohDns.createOkHttpClient())
+
     override val name: String = "EPorner"
     override val mainUrl: String = "https://www.eporner.com"
     override val supportedTypes: Set<MediaType> = setOf(MediaType.MOVIE)
     override val isSearchGlobalOnly: Boolean get() = false
-
-    private val mapper = jacksonObjectMapper()
 
     private val defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -279,17 +279,17 @@ class EpornerPlugin(
 
     private fun parseApiJson(jsonStr: String): List<MediaItem> {
         return try {
-            val root = mapper.readTree(jsonStr)
-            val videos = root.path("videos")
-            if (!videos.isArray) return emptyList()
+            val root = JSONObject(jsonStr)
+            val videos = root.optJSONArray("videos") ?: return emptyList()
 
             val items = mutableListOf<MediaItem>()
-            for (v in videos) {
-                val id = v.path("id").asText()
-                val title = v.path("title").asText()
-                val videoUrl = v.path("url").asText()
-                val duration = v.path("length_min").asText()
-                val posterUrl = v.path("default_thumb").path("src").asText()
+            for (i in 0 until videos.length()) {
+                val v = videos.optJSONObject(i) ?: continue
+                val id = v.optString("id")
+                val title = v.optString("title")
+                val videoUrl = v.optString("url")
+                val duration = v.optString("length_min")
+                val posterUrl = v.optJSONObject("default_thumb")?.optString("src") ?: ""
 
                 if (id.isNotBlank() && title.isNotBlank()) {
                     items.add(

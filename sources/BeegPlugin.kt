@@ -1,9 +1,9 @@
-﻿package com.euthopiar.core.provider
+package com.euthopiar.core.provider
 
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
-import com.fasterxml.jackson.databind.JsonNode
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -28,12 +28,12 @@ class BeegPlugin(
     )
 ) : UniversalPlugin {
 
+    constructor() : this(DohDns.createOkHttpClient())
+
     override val name: String = "Beeg"
     override val mainUrl: String = "https://beeg.com"
     override val supportedTypes: Set<MediaType> = setOf(MediaType.MOVIE)
     override val isSearchGlobalOnly: Boolean get() = false
-
-    private val mapper = jacksonObjectMapper()
 
     private val defaultUserAgent =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -115,23 +115,24 @@ class BeegPlugin(
                 if (resp.isSuccessful) {
                     val body = resp.body?.string()
                     if (!body.isNullOrBlank()) {
-                        val node = mapper.readTree(body)
-                        val fileNode = node.path("file")
-                        val dataArray = fileNode.path("data")
-                        if (dataArray.isArray) {
-                            for (entry in dataArray) {
-                                if (entry.path("cd_column").asText() == "sf_name") {
-                                    val t = entry.path("cd_value").asText()
+                        val node = JSONObject(body)
+                        val fileNode = node.optJSONObject("file")
+                        val dataArray = fileNode?.optJSONArray("data")
+                        if (dataArray != null) {
+                            for (i in 0 until dataArray.length()) {
+                                val entry = dataArray.optJSONObject(i) ?: continue
+                                if (entry.optString("cd_column") == "sf_name") {
+                                    val t = entry.optString("cd_value")
                                     if (t.isNotBlank()) title = t
                                 }
-                                if (entry.path("cd_column").asText() == "sf_story") {
-                                    val s = entry.path("cd_value").asText()
+                                if (entry.optString("cd_column") == "sf_story") {
+                                    val s = entry.optString("cd_value")
                                     if (s.isNotBlank()) synopsis = s
                                 }
                             }
                         }
 
-                        val durSec = fileNode.path("fl_duration").asInt(0)
+                        val durSec = fileNode?.optInt("fl_duration", 0) ?: 0
                         if (durSec > 0) {
                             duration = formatDuration(durSec)
                         }
@@ -241,20 +242,21 @@ class BeegPlugin(
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return emptyList()
                 val body = resp.body?.string() ?: return emptyList()
-                val arrayNode = mapper.readTree(body)
-                if (!arrayNode.isArray) return emptyList()
+                val arrayNode = JSONArray(body)
 
-                for (card in arrayNode) {
-                    val fileNode = card.path("file")
-                    val fileId = fileNode.path("id").asText()
+                for (i in 0 until arrayNode.length()) {
+                    val card = arrayNode.optJSONObject(i) ?: continue
+                    val fileNode = card.optJSONObject("file") ?: continue
+                    val fileId = fileNode.optString("id")
                     if (fileId.isBlank()) continue
 
                     var title = "Full Scene #$fileId"
-                    val dataArray = fileNode.path("data")
-                    if (dataArray.isArray) {
-                        for (entry in dataArray) {
-                            if (entry.path("cd_column").asText() == "sf_name") {
-                                val t = entry.path("cd_value").asText()
+                    val dataArray = fileNode.optJSONArray("data")
+                    if (dataArray != null) {
+                        for (j in 0 until dataArray.length()) {
+                            val entry = dataArray.optJSONObject(j) ?: continue
+                            if (entry.optString("cd_column") == "sf_name") {
+                                val t = entry.optString("cd_value")
                                 if (t.isNotBlank()) {
                                     title = t
                                     break
@@ -263,19 +265,19 @@ class BeegPlugin(
                         }
                     }
 
-                    val durSec = fileNode.path("fl_duration").asInt(0)
+                    val durSec = fileNode.optInt("fl_duration", 0)
                     val durStr = if (durSec > 0) formatDuration(durSec) else "25:00"
 
-                    val height = fileNode.path("fl_height").asInt(1080)
+                    val height = fileNode.optInt("fl_height", 1080)
                     val quality = "${height}p HD"
 
                     // Calculate thumbnail URL from first thumbnail offset
-                    val fcFacts = card.path("fc_facts")
+                    val fcFacts = card.optJSONArray("fc_facts")
                     var thumbOffset = 0
-                    if (fcFacts.isArray && fcFacts.size() > 0) {
-                        val thumbsArray = fcFacts.get(0).path("fc_thumbs")
-                        if (thumbsArray.isArray && thumbsArray.size() > 0) {
-                            thumbOffset = thumbsArray.get(0).asInt(0)
+                    if (fcFacts != null && fcFacts.length() > 0) {
+                        val thumbsArray = fcFacts.optJSONObject(0)?.optJSONArray("fc_thumbs")
+                        if (thumbsArray != null && thumbsArray.length() > 0) {
+                            thumbOffset = thumbsArray.optInt(0, 0)
                         }
                     }
 
@@ -283,10 +285,11 @@ class BeegPlugin(
 
                     // Extract model / tag names if available
                     val tagsList = mutableListOf<String>()
-                    val tagsArray = card.path("tags")
-                    if (tagsArray.isArray) {
-                        for (tNode in tagsArray) {
-                            val tgName = tNode.path("tg_name").asText()
+                    val tagsArray = card.optJSONArray("tags")
+                    if (tagsArray != null) {
+                        for (k in 0 until tagsArray.length()) {
+                            val tNode = tagsArray.optJSONObject(k) ?: continue
+                            val tgName = tNode.optString("tg_name")
                             if (tgName.isNotBlank()) tagsList.add(tgName)
                         }
                     }
