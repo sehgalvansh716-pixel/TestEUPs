@@ -46,16 +46,25 @@ class FourKHDHubPlugin(
     override val mainUrl: String = "https://4khdhub.one"
     override val supportedTypes: Set<MediaType> = setOf(MediaType.MOVIE, MediaType.TV_SERIES)
 
+    @Volatile
+    protected var host: HostApi? = null
+
+    override fun init(host: HostApi) {
+        this.host = host
+    }
+
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
-    private val defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    private val defaultUserAgent: String
+        get() = host?.defaultUserAgent ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     private val tmdbApiKey = "1865f43a0549ca50d341dd9ab8b29f49"
 
-    private val defaultHeaders = mapOf(
-        "User-Agent" to defaultUserAgent,
-        "Referer" to "https://4khdhub.one/",
-        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    )
+    private val defaultHeaders: Map<String, String>
+        get() = mapOf(
+            "User-Agent" to defaultUserAgent,
+            "Referer" to "$mainUrl/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
 
     // ============================================================================
     // 1. Home Catalog & Search
@@ -966,10 +975,12 @@ class FourKHDHubPlugin(
                         href.contains("pixel.hubcloud.ist", ignoreCase = true) ||
                         href.contains("pixeldrain.", ignoreCase = true) ||
                         href.contains("hbplay.pages.dev", ignoreCase = true) ||
-                        text.contains("Download [FSL Server]", ignoreCase = true) ||
+                        href.contains("storage.googleapis.com", ignoreCase = true) ||
+                        text.contains("FSL", ignoreCase = true) ||
                         text.contains("Download [Server : 10Gbps]", ignoreCase = true) ||
                         text.contains("Download [PixelServer", ignoreCase = true) ||
-                        text.contains("Watch Online", ignoreCase = true)
+                        text.contains("Watch Online", ignoreCase = true) ||
+                        text.contains("ZipDisk", ignoreCase = true)
 
                 if (isDirectServer) {
                     val isGoogleDirect = href.contains("pixel.hubcloud.ist") || href.contains("gpdl.hubcloud.ist") || text.contains("10Gbps")
@@ -998,9 +1009,19 @@ class FourKHDHubPlugin(
                         continue
                     }
 
+                    // Probe pixeldrain endpoints to avoid emitting expired 404 files
+                    if (directUrl.contains("pixeldrain.com/api/file")) {
+                        if (!isDownloadLinkAlive(directUrl)) {
+                            continue
+                        }
+                    }
+
+                    val isZip = directUrl.contains(".zip", ignoreCase = true) || text.contains("ZipDisk", ignoreCase = true) || href.contains("storage.googleapis.com")
                     val isGoogleStream = directUrl.contains("googleusercontent.com") || text.contains("10Gbps")
                     val serverName = when {
+                        isZip -> "HubCloud Fast Archive (ZipDisk)"
                         isGoogleStream -> "HubCloud 10Gbps Google Direct"
+                        text.contains("FSLv2", ignoreCase = true) -> "HubCloud FSLv2 Direct"
                         href.contains("r2.cloudflarestorage.com") || text.contains("FSL") -> "HubCloud FSL (R2 Direct)"
                         directUrl.contains("pixeldrain.com/api/file") -> "Pixeldrain Direct"
                         href.contains("hbplay.pages.dev") || text.contains("Watch Online") -> "HubCloud Web Stream"
@@ -1012,7 +1033,7 @@ class FourKHDHubPlugin(
                             name = serverName,
                             url = directUrl,
                             isDirectR2 = directUrl.contains("r2.cloudflarestorage.com"),
-                            isSeekableStream = !isGoogleStream
+                            isSeekableStream = !isGoogleStream && !isZip
                         )
                     )
                 }
@@ -1060,9 +1081,10 @@ class FourKHDHubPlugin(
                 .url(url)
                 .header("User-Agent", defaultUserAgent)
                 .header("Referer", "https://gamerxyt.com/")
+                .header("Range", "bytes=0-1024")
                 .build()
             client.newCall(req).execute().use { resp ->
-                resp.isSuccessful
+                resp.code in 200..299
             }
         } catch (_: Exception) {
             false
