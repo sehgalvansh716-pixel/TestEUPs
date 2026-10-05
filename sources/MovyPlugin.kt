@@ -92,15 +92,16 @@ class MovyPlugin(
     private val primaryMirrors = listOf(
         ServerMirror("miami", "Movy - Miami CDN", "https://api.wecollege.net/miami/sources"),
         ServerMirror("boise", "Movy - Boise CDN", "https://api.wecollege.net/boise/sources"),
-        ServerMirror("austin", "Movy - Austin CDN", "https://api.wecollege.net/austin/sources"),
-        ServerMirror("atlanta", "Movy - Atlanta CDN", "https://api.wecollege.net/atlanta/sources"),
-        ServerMirror("seattle", "Movy - Seattle CDN", "https://api.wecollege.net/seattle/sources"),
-        ServerMirror("denver", "Movy - Denver CDN", "https://api.wecollege.net/denver/sources"),
+        ServerMirror("vegas", "Movy - Vegas CDN", "https://api.wecollege.net/vegas/sources"),
         ServerMirror("phoenix", "Movy - Phoenix CDN", "https://api.wecollege.net/phoenix/sources"),
+        ServerMirror("atlanta", "Movy - Atlanta CDN", "https://api.wecollege.net/atlanta/sources"),
         ServerMirror("portland", "Movy - Portland CDN", "https://api.wecollege.net/portland/sources"),
         ServerMirror("dallas", "Movy - Dallas CDN", "https://api.wecollege.net/dallas/sources"),
         ServerMirror("tampa", "Movy - Tampa CDN", "https://api.wecollege.net/tampa/sources"),
-        ServerMirror("orlando", "Movy - Orlando CDN", "https://api.wecollege.net/orlando/sources")
+        ServerMirror("orlando", "Movy - Orlando CDN", "https://api.wecollege.net/orlando/sources"),
+        ServerMirror("austin", "Movy - Austin CDN", "https://api.wecollege.net/austin/sources"),
+        ServerMirror("seattle", "Movy - Seattle CDN", "https://api.wecollege.net/seattle/sources"),
+        ServerMirror("denver", "Movy - Denver CDN", "https://api.wecollege.net/denver/sources")
     )
 
     private val regionalMirrors = listOf(
@@ -660,6 +661,9 @@ class MovyPlugin(
             params.append("&episodeId=").append(episode)
             params.append("&totalSeasons=").append(meta.totalSeasons)
         }
+        if (mirror.id == "munich") {
+            params.append("&language=german")
+        }
         params.append("&enc=2")
         params.append("&seed=").append(URLEncoder.encode(seed, "UTF-8"))
 
@@ -720,15 +724,25 @@ class MovyPlugin(
             sourcesArr?.forEach { sElem ->
                 val sObj = sElem.jsonObject
                 val sUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                val quality = sObj["quality"]?.jsonPrimitive?.contentOrNull ?: "Auto"
+                val rawQuality = sObj["quality"]?.jsonPrimitive?.contentOrNull ?: "Auto"
+                val resLabel = when {
+                    rawQuality.contains("2160", ignoreCase = true) || rawQuality.contains("4k", ignoreCase = true) -> "4K (2160p)"
+                    rawQuality.contains("1080", ignoreCase = true) -> "1080p"
+                    rawQuality.contains("720", ignoreCase = true) -> "720p"
+                    rawQuality.contains("480", ignoreCase = true) -> "480p"
+                    rawQuality.contains("360", ignoreCase = true) -> "360p"
+                    rawQuality.equals("auto", ignoreCase = true) -> "Auto"
+                    rawQuality.equals("voe", ignoreCase = true) -> "Auto (VOE)"
+                    else -> rawQuality
+                }
 
                 streams.add(
                     StreamSource(
                         url = sUrl,
                         serverName = mirror.name,
-                        resolutionLabel = quality,
-                        quality = "${mirror.name} - $quality",
-                        isM3u8 = sUrl.contains(".m3u8") || sUrl.contains("type=m3u8") || sUrl.contains("/config-") || sUrl.contains("/master"),
+                        resolutionLabel = resLabel,
+                        quality = "${mirror.name} - $resLabel",
+                        isM3u8 = sUrl.contains(".m3u8") || sUrl.contains("type=m3u8") || sUrl.contains("/vd/") || sUrl.contains("/vdb/") || sUrl.contains("/r6/") || sUrl.contains("/config-") || sUrl.contains("/master"),
                         audioTracks = mirror.audioTracks,
                         releaseType = mirror.releaseType,
                         headers = defaultHeaders
