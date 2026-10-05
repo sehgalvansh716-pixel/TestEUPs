@@ -149,13 +149,23 @@ object CinejoyWasmEngine {
                 .post(requestBody)
                 .build()
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
+            val response = try {
+                client.newCall(request).execute()
+            } catch (e: Throwable) {
+                safeLog("CinejoyWasm", "POST to $GATEWAY_URL failed: ${e.message}", e)
                 return@withContext null
             }
 
-            val encryptedResp = response.body?.bytes() ?: return@withContext null
+            val encryptedResp = response.use { resp ->
+                if (!resp.isSuccessful) {
+                    safeLog("CinejoyWasm", "Gateway returned HTTP ${resp.code}")
+                    return@withContext null
+                }
+                resp.body?.bytes()
+            } ?: return@withContext null
+
             if (encryptedResp.size < 28) {
+                safeLog("CinejoyWasm", "Encrypted response payload too short: ${encryptedResp.size} bytes")
                 return@withContext null
             }
 
@@ -181,6 +191,7 @@ object CinejoyWasmEngine {
             val decryptedStr = String(decryptedBytes, Charsets.UTF_8)
             decryptedStr
         } catch (e: Throwable) {
+            safeLog("CinejoyWasm", "Wasm stream request failed for $server: ${e.message}", e)
             null
         }
     }
@@ -188,6 +199,20 @@ object CinejoyWasmEngine {
     fun prewarm(client: OkHttpClient) {
         try {
             getOrLoadModule(client)
-        } catch (_: Throwable) {}
+        } catch (e: Throwable) {
+            safeLog("CinejoyWasm", "Prewarm getOrLoadModule failed: ${e.message}", e)
+        }
+    }
+
+    private fun safeLog(tag: String, message: String, t: Throwable? = null) {
+        try {
+            if (t != null) {
+                android.util.Log.w(tag, message, t)
+            } else {
+                android.util.Log.w(tag, message)
+            }
+        } catch (_: Throwable) {
+            System.err.println("[$tag] $message" + (t?.let { ": ${it.message}" } ?: ""))
+        }
     }
 }

@@ -137,7 +137,14 @@ class CinejoyPlugin(
 
     // ───────────────────────────── Isolated Networking ─────────────────────────────
     private class PluginHttp(externalClient: OkHttpClient?) {
+        private val resolvedDns: Dns = externalClient?.dns ?: try {
+            com.euthopiar.core.network.DohDns.DEFAULT
+        } catch (_: Throwable) {
+            Dns.SYSTEM
+        }
+
         val meta: OkHttpClient = externalClient ?: OkHttpClient.Builder()
+            .dns(resolvedDns)
             .dispatcher(Dispatcher().apply { maxRequests = 32; maxRequestsPerHost = 8 })
             .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
             .connectTimeout(10, TimeUnit.SECONDS)
@@ -147,6 +154,7 @@ class CinejoyPlugin(
             .build()
 
         val cdn: OkHttpClient = OkHttpClient.Builder()
+            .dns(resolvedDns)
             .dispatcher(Dispatcher().apply { maxRequests = 16; maxRequestsPerHost = 8 })
             .protocols(listOf(Protocol.HTTP_1_1)) // Strictly forced HTTP/1.1 avoids RST_STREAM / HTTP 421
             .connectionPool(ConnectionPool(6, 30, TimeUnit.SECONDS))
@@ -202,8 +210,10 @@ class CinejoyPlugin(
         this.legacyHost = host
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                CinejoyWasmEngine.prewarm(http.cdn)
-            } catch (_: Throwable) {}
+                CinejoyWasmEngine.prewarm(http.meta)
+            } catch (t: Throwable) {
+                safeLog("CinejoyPlugin", "Prewarm error: ${t.message}", t)
+            }
         }
     }
 
@@ -212,8 +222,10 @@ class CinejoyPlugin(
         this.scopeJob = SupervisorJob(scope.coroutineContext[Job])
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                CinejoyWasmEngine.prewarm(http.cdn)
-            } catch (_: Throwable) {}
+                CinejoyWasmEngine.prewarm(http.meta)
+            } catch (t: Throwable) {
+                safeLog("CinejoyPlugin", "Prewarm error: ${t.message}", t)
+            }
         }
     }
 
@@ -574,7 +586,7 @@ class CinejoyPlugin(
             try {
                 var lisbonJson = withTimeoutOrNull(15000L) {
                     CinejoyWasmEngine.requestStream(
-                        client = http.cdn,
+                        client = http.meta,
                         server = "Lisbon",
                         type = if (isTv) "tv" else "movie",
                         tmdbId = tmdbId,
@@ -585,7 +597,7 @@ class CinejoyPlugin(
                 if ((lisbonJson == null || lisbonJson.contains("error")) && !isTv) {
                     lisbonJson = withTimeoutOrNull(15000L) {
                         CinejoyWasmEngine.requestStream(
-                            client = http.cdn,
+                            client = http.meta,
                             server = "Lisbon",
                             type = "tv",
                             tmdbId = tmdbId,
@@ -596,7 +608,7 @@ class CinejoyPlugin(
                 } else if ((lisbonJson == null || lisbonJson.contains("error")) && isTv) {
                     lisbonJson = withTimeoutOrNull(15000L) {
                         CinejoyWasmEngine.requestStream(
-                            client = http.cdn,
+                            client = http.meta,
                             server = "Lisbon",
                             type = "movie",
                             tmdbId = tmdbId
@@ -638,33 +650,26 @@ class CinejoyPlugin(
                                 expiresAtMs = System.currentTimeMillis() + (15 * 60_000L)
                             )
 
-                            // Pre-flight check via isolated cdn HTTP/1.1 OkHttp client
-                            val isLive = withTimeoutOrNull(5000L) {
-                                isStreamReachable(rawUrl, defaultHeaders)
-                            } ?: true // If probe times out, emit optimistically
+                            val lisbonSource = CoreStreamSource(
+                                url = rawUrl,
+                                serverName = "Lisbon (Auto)",
+                                resolutionLabel = "Auto",
+                                quality = "Cinejoy Lisbon (Auto HLS)",
+                                isM3u8 = true,
+                                releaseType = AudioReleaseType.ORIGINAL,
+                                headers = defaultHeaders
+                            )
+                            val lisbonKey = "${lisbonSource.serverName}:${lisbonSource.url}"
+                            if (emittedStreamKeys.add(lisbonKey)) {
+                                send(StreamEmission.SourceFound(lisbonSource))
+                            }
 
-                            if (isLive) {
-                                val lisbonSource = CoreStreamSource(
-                                    url = rawUrl,
-                                    serverName = "Lisbon (Auto)",
-                                    resolutionLabel = "Auto",
-                                    quality = "Cinejoy Lisbon (Auto HLS)",
-                                    isM3u8 = true,
-                                    releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = defaultHeaders
-                                )
-                                val lisbonKey = "${lisbonSource.serverName}:${lisbonSource.url}"
-                                if (emittedStreamKeys.add(lisbonKey)) {
-                                    send(StreamEmission.SourceFound(lisbonSource))
-                                }
-
-                                // Resolve child variants for Lisbon
-                                val variants = resolveMasterPlaylistVariants(rawUrl, "Lisbon", defaultHeaders)
-                                for (v in variants) {
-                                    val vKey = "${v.serverName}:${v.url}"
-                                    if (emittedStreamKeys.add(vKey)) {
-                                        send(StreamEmission.SourceFound(v))
-                                    }
+                            // Resolve child variants for Lisbon via isolated HTTP/1.1 CDN client
+                            val variants = resolveMasterPlaylistVariants(rawUrl, "Lisbon", defaultHeaders)
+                            for (v in variants) {
+                                val vKey = "${v.serverName}:${v.url}"
+                                if (emittedStreamKeys.add(vKey)) {
+                                    send(StreamEmission.SourceFound(v))
                                 }
                             }
                         }
@@ -673,7 +678,7 @@ class CinejoyPlugin(
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
-                Log.w("CinejoyPlugin", "Lisbon engine error: ${t.message}", t)
+                safeLog("CinejoyPlugin", "Lisbon engine error: ${t.message}", t)
             }
         }
 
@@ -682,7 +687,7 @@ class CinejoyPlugin(
             try {
                 var nebulaJson = withTimeoutOrNull(15000L) {
                     CinejoyWasmEngine.requestStream(
-                        client = http.cdn,
+                        client = http.meta,
                         server = "Nebula",
                         type = if (isTv) "tv" else "movie",
                         tmdbId = tmdbId,
@@ -693,7 +698,7 @@ class CinejoyPlugin(
                 if ((nebulaJson == null || nebulaJson.contains("error")) && !isTv) {
                     nebulaJson = withTimeoutOrNull(15000L) {
                         CinejoyWasmEngine.requestStream(
-                            client = http.cdn,
+                            client = http.meta,
                             server = "Nebula",
                             type = "tv",
                             tmdbId = tmdbId,
@@ -704,7 +709,7 @@ class CinejoyPlugin(
                 } else if ((nebulaJson == null || nebulaJson.contains("error")) && isTv) {
                     nebulaJson = withTimeoutOrNull(15000L) {
                         CinejoyWasmEngine.requestStream(
-                            client = http.cdn,
+                            client = http.meta,
                             server = "Nebula",
                             type = "movie",
                             tmdbId = tmdbId
@@ -1674,14 +1679,32 @@ class CinejoyPlugin(
     }
 
     private fun isStreamReachable(url: String, headers: Map<String, String>): Boolean {
+        if (url.isBlank()) return false
         return try {
+            val isTextOrPlaylist = url.contains(".m3u8") || url.contains(".txt")
             val req = Request.Builder().url(url)
             headers.forEach { (k, v) -> req.header(k, v) }
+            if (!isTextOrPlaylist) {
+                req.header("Range", "bytes=0-2048")
+            }
             http.cdn.newCall(req.build()).execute().use { resp ->
-                resp.isSuccessful
+                resp.isSuccessful || resp.code in 200..399
+            }
+        } catch (t: Throwable) {
+            safeLog("CinejoyPlugin", "isStreamReachable probe warning for $url: ${t.message}")
+            true
+        }
+    }
+
+    private fun safeLog(tag: String, message: String, t: Throwable? = null) {
+        try {
+            if (t != null) {
+                Log.w(tag, message, t)
+            } else {
+                Log.w(tag, message)
             }
         } catch (_: Throwable) {
-            false
+            System.err.println("[$tag] $message" + (t?.let { ": ${it.message}" } ?: ""))
         }
     }
 
