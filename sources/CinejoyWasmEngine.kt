@@ -88,12 +88,15 @@ object CinejoyWasmEngine {
             val sealRequest = instance.export("seal_request")
             val memory = instance.memory()
 
+            val cleanTmdb = tmdbId.substringBefore("?").substringAfterLast("/").substringBefore(":").substringBefore("-").trim().filter { it.isDigit() }.ifBlank { tmdbId.filter { it.isDigit() } }
             val endpointType = if (type == "tv") "series" else type
             val path = "/$server/$endpointType"
             val jsonPayload = if (season != null && episode != null) {
-                """{"path":"$path","payload":{"tmdb":"$tmdbId","season":"$season","episode":"$episode"}}"""
+                """{"path":"$path","payload":{"tmdb":"$cleanTmdb","season":"$season","episode":"$episode"}}"""
+            } else if (endpointType == "series") {
+                """{"path":"$path","payload":{"tmdb":"$cleanTmdb","season":"1","episode":"1"}}"""
             } else {
-                """{"path":"$path","payload":{"tmdb":"$tmdbId"}}"""
+                """{"path":"$path","payload":{"tmdb":"$cleanTmdb"}}"""
             }
 
             val plaintextBytes = jsonPayload.toByteArray(Charsets.UTF_8)
