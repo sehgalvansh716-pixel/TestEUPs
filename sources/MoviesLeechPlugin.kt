@@ -1,10 +1,13 @@
 package com.euthopiar.core.provider
 
 import com.euthopiar.core.dsl.*
+import com.euthopiar.core.matcher.MatchScorer
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
 import com.euthopiar.core.util.TmdbBridge
 import com.euthopiar.core.util.parallelMapIsolated
+import com.euthopiar.eup.api.ContentType
+import com.euthopiar.eup.api.MatchHints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -203,6 +206,13 @@ class MoviesLeechPlugin(
     // ============================================================================
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
+        var isTv = mediaItem.type == MediaType.TV_SERIES
+        val isPureTmdbId = mediaItem.id.isNotBlank() && mediaItem.id.all { it.isDigit() }
+        var resolvedTmdbId: String? = if (isPureTmdbId) mediaItem.id else null
+        var enrichedMeta: TmdbBridge.EnrichedMetadata? = if (!resolvedTmdbId.isNullOrBlank()) {
+            TmdbBridge.fetchEnrichedDetails(client, resolvedTmdbId, isTv, name, tmdbApiKey)
+        } else null
+
         val postUrl = when {
             mediaItem.url.startsWith("http") && !mediaItem.url.contains("tmdb://") -> mediaItem.url
             mediaItem.id.startsWith("http") && !mediaItem.id.contains("tmdb://") -> mediaItem.id
@@ -219,25 +229,39 @@ class MoviesLeechPlugin(
 
         // Search fallback if direct slug navigation failed (e.g. from TMDB recommendations or slug change)
         var targetUrl = postUrl
-        if (doc == null && mediaItem.title.isNotBlank()) {
-            try {
-                val searchResults = search(mediaItem.title)
-                val targetClean = cleanTitleForDisplay(mediaItem.title).lowercase().trim()
-                val match = searchResults.firstOrNull {
-                    it.title.equals(mediaItem.title, ignoreCase = true) ||
-                            cleanTitleForDisplay(it.title).equals(targetClean, ignoreCase = true) ||
-                            it.url.contains(mediaItem.id.trim('/'), ignoreCase = true)
-                } ?: searchResults.firstOrNull {
-                    val candidateClean = cleanTitleForDisplay(it.title).lowercase().trim()
-                    candidateClean.isNotBlank() && targetClean.isNotBlank() &&
-                            (candidateClean == targetClean || candidateClean.startsWith(targetClean) || targetClean.startsWith(candidateClean))
-                }
+        if (doc == null) {
+            val queryTitle = enrichedMeta?.title?.ifBlank { null } ?: mediaItem.title.ifBlank { null }
+            val queryYear = enrichedMeta?.year ?: mediaItem.year
 
-                if (match != null) {
-                    targetUrl = match.url
-                    doc = client.getHtml(targetUrl, defaultHeaders)
-                }
-            } catch (_: Exception) {}
+            if (!queryTitle.isNullOrBlank()) {
+                try {
+                    val searchResults = search(cleanTitleForDisplay(queryTitle))
+                    val hints = MatchHints(
+                        tmdbId = resolvedTmdbId?.toIntOrNull() ?: 0,
+                        imdbId = enrichedMeta?.imdbId ?: mediaItem.id,
+                        type = if (isTv) ContentType.TV_SERIES else ContentType.MOVIE,
+                        titles = setOfNotNull(enrichedMeta?.title, mediaItem.title).filter { it.isNotBlank() }.toSet(),
+                        year = queryYear,
+                        runtimeMin = null
+                    )
+
+                    val bestMatch = searchResults
+                        .map { it to MatchScorer.score(hints, it) }
+                        .filter { it.second >= MatchScorer.THRESHOLD_VERIFY }
+                        .maxByOrNull { it.second }?.first
+                        ?: searchResults.firstOrNull {
+                            val candidateClean = cleanTitleForDisplay(it.title).lowercase().trim()
+                            val targetClean = cleanTitleForDisplay(queryTitle).lowercase().trim()
+                            candidateClean.isNotBlank() && targetClean.isNotBlank() &&
+                                    (candidateClean == targetClean || candidateClean.startsWith(targetClean) || targetClean.startsWith(candidateClean))
+                        }
+
+                    if (bestMatch != null) {
+                        targetUrl = bestMatch.url
+                        doc = client.getHtml(targetUrl, defaultHeaders)
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
         // 1. Extract Site-Native Metadata
@@ -249,7 +273,7 @@ class MoviesLeechPlugin(
         val cleanTitle = cleanTitleForDisplay(entryTitle).ifBlank { mediaItem.title }
         val siteTitle = cleanTitle
 
-        val isTv = mediaItem.type == MediaType.TV_SERIES ||
+        isTv = isTv ||
                 postUrl.contains("series", ignoreCase = true) ||
                 entryTitle.contains(Regex("""\b(Season|Series|S\d{1,2}|Episode)\b""", RegexOption.IGNORE_CASE))
 
@@ -299,24 +323,26 @@ class MoviesLeechPlugin(
         val postImdbId = imdbMatch?.groupValues?.get(1)
 
         // 3. TMDB Bridge: Lookup TMDB ID and Enrich Missing Metadata
-        val resolvedTmdbId = postImdbId?.let { TmdbBridge.findTmdbIdByImdb(client, it, isTv, tmdbApiKey) }
+        val finalTmdbId = resolvedTmdbId
+            ?: postImdbId?.let { TmdbBridge.findTmdbIdByImdb(client, it, isTv, tmdbApiKey) }
             ?: TmdbBridge.searchTmdbId(client, cleanTitle, siteYear, isTv, tmdbApiKey)
 
-        val enrichedMeta = if (!resolvedTmdbId.isNullOrBlank()) {
-            TmdbBridge.fetchEnrichedDetails(client, resolvedTmdbId, isTv, name, tmdbApiKey)
-        } else null
+        val finalMeta = enrichedMeta
+            ?: if (!finalTmdbId.isNullOrBlank()) {
+                TmdbBridge.fetchEnrichedDetails(client, finalTmdbId, isTv, name, tmdbApiKey)
+            } else null
 
-        val enrichedPoster = enrichedMeta?.posterUrl ?: sitePoster
-        val enrichedBackdrop = enrichedMeta?.backdropUrl ?: mediaItem.backdropUrl ?: enrichedPoster
-        val enrichedSynopsis = if (siteSynopsis.isNotBlank()) siteSynopsis else (enrichedMeta?.synopsis ?: siteSynopsis)
-        val enrichedRating = enrichedMeta?.rating ?: mediaItem.rating
-        val enrichedRtRating = enrichedMeta?.rottenTomatoesRating
-        val enrichedContentRating = enrichedMeta?.contentRating
-        val enrichedDuration = enrichedMeta?.duration
-        val enrichedYear = if (isTv && enrichedMeta?.year != null) enrichedMeta.year else (siteYear ?: enrichedMeta?.year)
-        val enrichedImdbId = enrichedMeta?.imdbId ?: postImdbId
-        val finalCast = if (enrichedMeta?.cast?.isNotEmpty() == true) enrichedMeta.cast else emptyList()
-        val enrichedLogo = enrichedMeta?.logoUrl ?: resolveLogo(mediaItem)
+        val enrichedPoster = finalMeta?.posterUrl ?: sitePoster
+        val enrichedBackdrop = finalMeta?.backdropUrl ?: mediaItem.backdropUrl ?: enrichedPoster
+        val enrichedSynopsis = if (siteSynopsis.isNotBlank()) siteSynopsis else (finalMeta?.synopsis ?: siteSynopsis)
+        val enrichedRating = finalMeta?.rating ?: mediaItem.rating
+        val enrichedRtRating = finalMeta?.rottenTomatoesRating
+        val enrichedContentRating = finalMeta?.contentRating
+        val enrichedDuration = finalMeta?.duration
+        val enrichedYear = if (isTv && finalMeta?.year != null) finalMeta.year else (siteYear ?: finalMeta?.year)
+        val enrichedImdbId = finalMeta?.imdbId ?: postImdbId
+        val finalCast = if (finalMeta?.cast?.isNotEmpty() == true) finalMeta.cast else emptyList()
+        val enrichedLogo = finalMeta?.logoUrl ?: resolveLogo(mediaItem)
         // Prioritize authentic site-native related titles parsed directly from MoviesLeech
         val siteRelatedItems = mutableListOf<MediaItem>()
         doc?.select("a[href]")?.forEach { a ->
@@ -351,9 +377,9 @@ class MoviesLeechPlugin(
                 }
             }
         }
-        val enrichedRecs = if (siteRelatedItems.isNotEmpty()) siteRelatedItems.take(12) else (enrichedMeta?.recommendations ?: emptyList())
-        val enrichedTrailer = enrichedMeta?.trailerUrl
-        val enrichedDirectors = enrichedMeta?.directors ?: emptyList()
+        val enrichedRecs = if (siteRelatedItems.isNotEmpty()) siteRelatedItems.take(12) else (finalMeta?.recommendations ?: emptyList())
+        val enrichedTrailer = finalMeta?.trailerUrl
+        val enrichedDirectors = finalMeta?.directors ?: emptyList()
 
         val rawSlug = if (targetUrl.startsWith("http")) {
             targetUrl.removePrefix(mainUrl).removePrefix("https://moviesleech.club").trim('/')
@@ -419,9 +445,9 @@ class MoviesLeechPlugin(
                 }
             }
 
-            val seasonsToFetch = (enrichedMeta?.seasonNumbers ?: listOf(postSeasonNumber)).distinct()
-            val tmdbSeasonsData = if (!resolvedTmdbId.isNullOrBlank()) {
-                TmdbBridge.fetchTmdbSeasons(client, resolvedTmdbId, seasonsToFetch, tmdbApiKey)
+            val seasonsToFetch = (finalMeta?.seasonNumbers ?: listOf(postSeasonNumber)).distinct()
+            val tmdbSeasonsData = if (!finalTmdbId.isNullOrBlank()) {
+                TmdbBridge.fetchTmdbSeasons(client, finalTmdbId, seasonsToFetch, tmdbApiKey)
             } else emptyMap()
 
             // Assemble each real episode and attach its official TMDB 16:9 banner
@@ -429,7 +455,7 @@ class MoviesLeechPlugin(
                 epMap.entries.sortedWith(compareBy({ it.key.first }, { it.key.second })).forEach { (key, variants) ->
                     val (sNum, epNum) = key
                     val payload = MoviesLeechTvPayload(
-                        tmdbId = resolvedTmdbId,
+                        tmdbId = finalTmdbId,
                         imdbId = enrichedImdbId,
                         season = sNum,
                         episode = epNum,
@@ -482,7 +508,7 @@ class MoviesLeechPlugin(
             }
 
             val payload = MoviesLeechMoviePayload(
-                tmdbId = resolvedTmdbId,
+                tmdbId = finalTmdbId,
                 imdbId = enrichedImdbId,
                 title = siteTitle,
                 url = if (targetUrl.startsWith("http")) targetUrl else postUrl,
@@ -513,7 +539,7 @@ class MoviesLeechPlugin(
             type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
             year = enrichedYear,
             synopsis = enrichedSynopsis,
-            genres = (siteGenres + (enrichedMeta?.genres ?: emptyList())).distinct(),
+            genres = (siteGenres + (finalMeta?.genres ?: emptyList())).distinct(),
             duration = enrichedDuration,
             episodes = episodes,
             rating = enrichedRating,
@@ -805,22 +831,9 @@ class MoviesLeechPlugin(
             }
         } catch (_: Exception) {}
 
-        // Fallback: if raw postUrl or single leech link passed
+        // Fallback: if raw postUrl, single leech link, slug, or numeric TMDB ID passed
         if (variants.isEmpty()) {
-            if (episodeData.contains("leechpro.blog/archives/")) {
-                variants.add(MoviesLeechVariant("1080p FHD", "Direct", episodeData))
-            } else if (episodeData.startsWith("http")) {
-                try {
-                    val doc = client.getHtml(episodeData, defaultHeaders)
-                    val links = doc.select("a[href*='leechpro.blog/archives/']")
-                    for (link in links) {
-                        val href = link.attr("abs:href").ifBlank { link.attr("href") }
-                        val parentText = link.parent()?.text() ?: ""
-                        val qLabel = parseQualityLabel(parentText)
-                        variants.add(MoviesLeechVariant(qLabel, "Direct", href))
-                    }
-                } catch (_: Exception) {}
-            }
+            variants.addAll(resolveVariantsOnDemand(episodeData))
         }
 
         // 2. Concurrently fetch multi-language subtitles via OpenSubtitles and Wyzie
@@ -911,7 +924,7 @@ class MoviesLeechPlugin(
             }.thenBy { it.serverName }
         )
 
-        val result = StreamResult(streams = sortedStreams, subtitles = subtitles)
+        val result = StreamResult(streams = sortedStreams.distinctBy { it.url }, subtitles = subtitles)
         if (result.streams.isNotEmpty()) {
             streamCache[episodeData] = now to result
         }
@@ -1039,7 +1052,60 @@ class MoviesLeechPlugin(
                 provider = name,
                 headers = stream.headers
             )
+        }.filter { it.url.startsWith("http") }.distinctBy { it.url }
+    }
+
+    private suspend fun resolveVariantsOnDemand(episodeData: String): List<MoviesLeechVariant> = withContext(Dispatchers.IO) {
+        val foundVariants = mutableListOf<MoviesLeechVariant>()
+        val trimmed = episodeData.trim()
+
+        if (trimmed.contains("leechpro.blog/archives/")) {
+            foundVariants.add(MoviesLeechVariant("1080p FHD", "Direct", trimmed))
+            return@withContext foundVariants
         }
+
+        if (trimmed.startsWith("http") && trimmed.contains("moviesleech.club")) {
+            try {
+                val doc = client.getHtml(trimmed, defaultHeaders)
+                val links = doc.select("a[href*='leechpro.blog/archives/']")
+                for (link in links) {
+                    val href = link.attr("abs:href").ifBlank { link.attr("href") }
+                    val parentText = link.parent()?.text() ?: ""
+                    val qLabel = parseQualityLabel(parentText)
+                    val sizeMatch = Regex("""\b(\d+(?:\.\d+)?\s*(?:GB|MB))\b""", RegexOption.IGNORE_CASE)
+                        .find(parentText)?.groupValues?.get(1) ?: "Direct"
+                    foundVariants.add(MoviesLeechVariant(qLabel, sizeMatch, href))
+                }
+                if (foundVariants.isNotEmpty()) return@withContext foundVariants
+            } catch (_: Exception) {}
+        }
+
+        // If it's a slug or numeric TMDB ID, resolve via getDetails
+        try {
+            val dummyItem = MediaItem(
+                id = trimmed,
+                title = if (trimmed.all { it.isDigit() }) "" else trimmed.replace("-", " "),
+                url = if (trimmed.startsWith("http")) trimmed else "",
+                posterUrl = null,
+                backdropUrl = null,
+                type = MediaType.MOVIE,
+                provider = name
+            )
+            val details = getDetails(dummyItem)
+            val epData = details.episodes.firstOrNull()?.data
+            if (!epData.isNullOrBlank() && epData.contains("\"variants\"")) {
+                val root = json.parseToJsonElement(epData).jsonObject
+                val varArr = root["variants"]?.jsonArray
+                varArr?.forEach { elem ->
+                    try {
+                        val v = json.decodeFromJsonElement(MoviesLeechVariant.serializer(), elem)
+                        foundVariants.add(v)
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+
+        foundVariants
     }
 
     // ============================================================================
