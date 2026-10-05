@@ -1,7 +1,7 @@
 {
-  "name": "TestEUPs Official Testing Repository",
-  "description": "Decoupled EUP plugin test repository for Euthopiar",
-  "manifestVersion": 1,
+  "name": "Vansh EUPs v2 Official Repository",
+  "description": "Official decoupled EUP v2 plugin repository for Euthopiar (Media3, Token single-flight, Virtual HLS, TMDB, AniSkip, OpenSubtitles)",
+  "manifestVersion": 2,
   "plugins": [
     {
       "id": "atlantic",
@@ -12,7 +12,7 @@
       "siteUrl": "https://atlantic.st",
       "description": "High-speed 1080p HLS multi-server streaming with Helios & Natsuki subs (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.AtlanticPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/atlantic.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/atlantic.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "b7644fc0ef81dc45a36fa65d6c974fe29ac8cb5a6ba98e3d048e3a4a475462d5",
@@ -21,7 +21,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 52894,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "uhdmovies",
@@ -32,7 +35,7 @@
       "siteUrl": "https://uhdmovies.my",
       "description": "4K UHD, HDR, 10Bit HEVC streaming (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.UhdMoviesPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/uhdmovies.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/uhdmovies.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "16420f15cdd68ef49915416a555b42ddd86677c25a1bf2f6b260b61783d1f187",
@@ -41,7 +44,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 49838,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "moviesleech",
@@ -52,7 +58,7 @@
       "siteUrl": "https://moviesleech.club",
       "description": "Bollywood, Indian cinema, Hollywood, and Web Series streaming with Fast Server G-Drive mirrors (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.MoviesLeechPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/moviesleech.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/moviesleech.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "55a1b543c265f7632332160935d0252d34dbdc42d591a7b65326f618dbb9c559",
@@ -61,7 +67,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 55076,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "movy",
@@ -72,7 +81,7 @@
       "siteUrl": "https://www.movy.sx",
       "description": "High-speed multi-server streaming with PRNG decrypted CDN mirrors, 4K/1080p HLS, and multi-dub audio (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.MovyPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "a137a09aa957682fdd254b610eeb6066865a8c786bf66b782f38607fb94e3d92",
@@ -81,7 +90,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 42985,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "pvrplay",
@@ -92,7 +104,7 @@
       "siteUrl": "https://pvrplay.site",
       "description": "Direct high-speed multi-audio CDN streaming with Hindi, Tamil, Telugu, and English dubs & multi-language subtitles (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.PvrPlayPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/pvrplay.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/pvrplay.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "8013bcf56882204c8a554e0bcdfac59a74ef9b637513a29d2029d1cd7bc190cd",
@@ -101,7 +113,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 36060,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "cinejoy",
@@ -112,7 +127,7 @@
       "siteUrl": "https://cinejoy.pk",
       "description": "High-speed multi-server streaming with verified Nebula 1080p master HLS auto-start, sanitized Lisbon mirror, R2 downloads & full subtitles (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.CinejoyPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "14a9495768a17c26b21324a6f5f6a15982a45b884f448355661f53b6a5601cbf",
@@ -121,7 +136,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 102314,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "aether",
@@ -132,7 +150,7 @@
       "siteUrl": "https://aether.ist",
       "description": "Curated multi-provider streaming ecosystem with Helios, Aphrodite, Meridian, Lula, and Link multi-quality HLS mirrors, subtitles, and downloads (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.AetherPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "e8f559dd7d55c04984bdcc52dcab5f74e14177490cc9fb2956c94763ec9c04a9",
@@ -141,7 +159,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 49609,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "1shows",
@@ -152,7 +173,7 @@
       "siteUrl": "https://www.1shows.bz",
       "description": "Direct 4K Remux / 1080p high-speed downloads & streams via MakimaDL wasm engine (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.OneShowsPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "5a3350d64e00d03507cb6a98e75dc89f14b821cd1b5cc498981518eec4e30b0e",
@@ -161,7 +182,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 72303,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "4khdhub",
@@ -172,7 +196,7 @@
       "siteUrl": "https://4khdhub.one",
       "description": "High quality 4K UHD, HDR, REMUX, and multi-language streaming with Cloudflare R2 FSL 10Gbps seekable media and live mirrors (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.FourKHDHubPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "7d81be23e1122bf762e73f906300ab931119322744370642d056e0e65239ff19",
@@ -181,7 +205,10 @@
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 61659,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "hqporner",
@@ -192,16 +219,17 @@
       "siteUrl": "https://hqporner.com",
       "description": "Full-length 4K Ultra HD and 1080p studio scenes with direct MP4 CDN playback.",
       "className": "com.euthopiar.core.provider.HQPornerPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/hqporner.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/hqporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "a2493529407fb3886daec48743abf88f53b37b05d0a1e458ea1a176b0ec977d2",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 15130,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "xvideos",
@@ -212,16 +240,17 @@
       "siteUrl": "https://www.xvideos2.com",
       "description": "Full-length uncut scenes, uploader channels, and 1080p/720p HLS master streams.",
       "className": "com.euthopiar.core.provider.XvideosPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/xvideos.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/xvideos.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "69b5b15c1f5643b8194b5db7da55f90aeb4f3a21900cba08292a2c1507d91981",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 16814,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "eporner",
@@ -232,16 +261,17 @@
       "siteUrl": "https://www.eporner.com",
       "description": "4K 60FPS Ultra HD and 1080p full-length scene streaming via official JSON API.",
       "className": "com.euthopiar.core.provider.EpornerPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/eporner.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/eporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "69f984364edd39b8cd9dbd21865c97bc470eb2414099632d594c2f665b53d9ea",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 18418,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "rule34video",
@@ -252,16 +282,17 @@
       "siteUrl": "https://rule34video.com",
       "description": "3D, CGI, and animated artwork scenes with high-bitrate direct MP4 playback.",
       "className": "com.euthopiar.core.provider.Rule34VideoPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/rule34video.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/rule34video.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "fe0a1f99ba054d98166b6d6c6a4244582455425021c4de236fefb5ca18ca08a4",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 12430,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "beeg",
@@ -272,16 +303,17 @@
       "siteUrl": "https://beeg.com",
       "description": "Clean, ad-free full-length scenes with fast CDN MP4 streaming.",
       "className": "com.euthopiar.core.provider.BeegPlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/beeg.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/beeg.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "d66268982fbbcdf2f514f028203419570c706ee186f53ad361126f9d3b503985",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 15790,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "faphouse",
@@ -292,16 +324,17 @@
       "siteUrl": "https://faphouse.com",
       "description": "16:9 short-form and full-length scene metadata, categories, creators, and multi-resolution streams.",
       "className": "com.euthopiar.core.provider.FaphousePlugin",
-      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/faphouse.eup",
+      "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/VanshEUPs-V2-Architecture/main/faphouse.eup",
       "isBuiltIn": false,
       "isEnabled": true,
       "sha256": "c66328ce3594e426b8894eb9cd1bffbfb72b602741604c7468e66187badcb585",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 15836,
+      "isAdult": true,
+      "isVault": true
     }
   ]
 }
