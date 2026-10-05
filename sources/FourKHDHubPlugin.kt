@@ -1,10 +1,13 @@
 package com.euthopiar.core.provider
 
 import com.euthopiar.core.dsl.*
+import com.euthopiar.core.matcher.MatchScorer
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
 import com.euthopiar.core.util.TmdbBridge
 import com.euthopiar.core.util.parallelMapIsolated
+import com.euthopiar.eup.api.ContentType
+import com.euthopiar.eup.api.MatchHints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -221,6 +224,11 @@ class FourKHDHubPlugin(
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val isTv = mediaItem.type == MediaType.TV_SERIES
+        val isPureTmdbId = mediaItem.id.isNotBlank() && mediaItem.id.all { it.isDigit() }
+        var resolvedTmdbId: String? = if (isPureTmdbId) mediaItem.id else null
+        var enrichedMeta: TmdbBridge.EnrichedMetadata? = if (!resolvedTmdbId.isNullOrBlank()) {
+            TmdbBridge.fetchEnrichedDetails(client, resolvedTmdbId, isTv, name, tmdbApiKey)
+        } else null
 
         // 1. Resolve authentic 4KHDHub web URL
         var targetUrl = resolveTargetUrl(mediaItem)
@@ -232,26 +240,40 @@ class FourKHDHubPlugin(
             } catch (_: Exception) {}
         }
 
-        // If direct slug URL was invalid or empty, fallback to searching the title on 4khdhub
-        if (doc == null && mediaItem.title.isNotBlank()) {
-            try {
-                val searchResults = search(mediaItem.title)
-                val targetClean = cleanTitleForDisplay(mediaItem.title).lowercase().trim()
-                val match = searchResults.firstOrNull {
-                    it.title.equals(mediaItem.title, ignoreCase = true) ||
-                            cleanTitleForDisplay(it.title).equals(targetClean, ignoreCase = true) ||
-                            it.url.contains(mediaItem.id.trim('/'), ignoreCase = true)
-                } ?: searchResults.firstOrNull {
-                    val candidateClean = cleanTitleForDisplay(it.title).lowercase().trim()
-                    candidateClean.isNotBlank() && targetClean.isNotBlank() &&
-                            (candidateClean == targetClean || candidateClean.startsWith(targetClean) || targetClean.startsWith(candidateClean))
-                }
+        // If direct slug URL was invalid or empty, fallback to searching via MatchHints + MatchScorer
+        if (doc == null) {
+            val queryTitle = enrichedMeta?.title?.ifBlank { null } ?: mediaItem.title.ifBlank { null }
+            val queryYear = enrichedMeta?.year ?: mediaItem.year
 
-                if (match != null) {
-                    targetUrl = match.url
-                    doc = client.getHtml(targetUrl, defaultHeaders)
-                }
-            } catch (_: Exception) {}
+            if (!queryTitle.isNullOrBlank()) {
+                try {
+                    val searchResults = search(cleanTitleForDisplay(queryTitle))
+                    val hints = MatchHints(
+                        tmdbId = resolvedTmdbId?.toIntOrNull() ?: 0,
+                        imdbId = enrichedMeta?.imdbId ?: mediaItem.id,
+                        type = if (isTv) ContentType.TV_SERIES else ContentType.MOVIE,
+                        titles = setOfNotNull(enrichedMeta?.title, mediaItem.title).filter { it.isNotBlank() }.toSet(),
+                        year = queryYear,
+                        runtimeMin = null
+                    )
+
+                    val bestMatch = searchResults
+                        .map { it to MatchScorer.score(hints, it) }
+                        .filter { it.second >= MatchScorer.THRESHOLD_VERIFY }
+                        .maxByOrNull { it.second }?.first
+                        ?: searchResults.firstOrNull {
+                            val candidateClean = cleanTitleForDisplay(it.title).lowercase().trim()
+                            val targetClean = cleanTitleForDisplay(queryTitle).lowercase().trim()
+                            candidateClean.isNotBlank() && targetClean.isNotBlank() &&
+                                    (candidateClean == targetClean || candidateClean.startsWith(targetClean) || targetClean.startsWith(candidateClean))
+                        }
+
+                    if (bestMatch != null) {
+                        targetUrl = bestMatch.url
+                        doc = client.getHtml(targetUrl, defaultHeaders)
+                    }
+                } catch (_: Exception) {}
+            }
         }
 
         // 2. Extract site-native metadata
@@ -307,23 +329,25 @@ class FourKHDHubPlugin(
             }
         }
 
-        // 3. Extract or resolve TMDB ID
+        // 3. Extract or resolve TMDB ID if not already resolved
         val htmlString = doc?.html() ?: ""
         val tmdbMatch = Regex("""defaultVideoId\s*=\s*['"](\d+)['"]""").find(htmlString)
-        var resolvedTmdbId: String? = tmdbMatch?.groupValues?.get(1)
+        if (resolvedTmdbId.isNullOrBlank()) {
+            resolvedTmdbId = tmdbMatch?.groupValues?.get(1)
+        }
 
-        if (resolvedTmdbId == null && mediaItem.id.all { it.isDigit() } && mediaItem.id.isNotBlank()) {
+        if (resolvedTmdbId.isNullOrBlank() && mediaItem.id.all { it.isDigit() } && mediaItem.id.isNotBlank()) {
             resolvedTmdbId = mediaItem.id
         }
 
-        if (resolvedTmdbId == null && cleanTitle.isNotBlank()) {
+        if (resolvedTmdbId.isNullOrBlank() && cleanTitle.isNotBlank()) {
             resolvedTmdbId = TmdbBridge.searchTmdbId(client, cleanTitle, siteYear, isTv, tmdbApiKey)
         }
 
-        // 4. Enrich missing metadata via TMDB Bridge
-        val enrichedMeta = if (!resolvedTmdbId.isNullOrBlank()) {
-            TmdbBridge.fetchEnrichedDetails(client, resolvedTmdbId, isTv, name, tmdbApiKey)
-        } else null
+        // 4. Enrich missing metadata via TMDB Bridge if not already fetched
+        if (enrichedMeta == null && !resolvedTmdbId.isNullOrBlank()) {
+            enrichedMeta = TmdbBridge.fetchEnrichedDetails(client, resolvedTmdbId, isTv, name, tmdbApiKey)
+        }
 
         val enrichedPoster = enrichedMeta?.posterUrl ?: sitePoster ?: mediaItem.posterUrl
         val enrichedBackdrop = enrichedMeta?.backdropUrl ?: mediaItem.backdropUrl ?: enrichedPoster
@@ -423,27 +447,46 @@ class FourKHDHubPlugin(
         } else {
             val parsedEpisodes = doc?.let { parseSeriesEpisodes(it, resolvedTmdbId, siteTitle, targetUrl) } ?: emptyList()
 
-            // Merge with TMDB episode names, stills, and descriptions
-            val enrichedEpisodes = parsedEpisodes.map { ep ->
-                val tmdbEp = tmdbSeasonsData[ep.seasonNumber]?.get(ep.episodeNumber)
-                if (tmdbEp != null) {
-                    ep.copy(
-                        title = tmdbEp.name.ifBlank { ep.title },
-                        thumbnail = tmdbEp.stillUrl ?: ep.thumbnail ?: enrichedBackdrop ?: enrichedPoster ?: sitePoster,
-                        description = tmdbEp.overview?.ifBlank { ep.description } ?: ep.description,
-                        duration = tmdbEp.duration ?: ep.duration
-                    )
-                } else {
-                    ep.copy(
-                        thumbnail = ep.thumbnail ?: enrichedBackdrop ?: enrichedPoster ?: sitePoster
-                    )
+            if (parsedEpisodes.isEmpty() && tmdbSeasonsData.isNotEmpty()) {
+                for ((sNum, eps) in tmdbSeasonsData) {
+                    for ((eNum, epDetail) in eps) {
+                        episodes.add(
+                            EpisodeItem(
+                                id = "${resolvedTmdbId ?: mediaItem.id}:S${sNum}E$eNum",
+                                title = epDetail.name.ifBlank { "Episode $eNum" },
+                                seasonNumber = sNum,
+                                episodeNumber = eNum,
+                                data = "${resolvedTmdbId ?: mediaItem.id}:$sNum:$eNum",
+                                thumbnail = epDetail.stillUrl ?: enrichedBackdrop ?: enrichedPoster ?: sitePoster,
+                                description = epDetail.overview,
+                                duration = epDetail.duration
+                            )
+                        )
+                    }
                 }
+            } else {
+                // Merge with TMDB episode names, stills, and descriptions
+                val enrichedEpisodes = parsedEpisodes.map { ep ->
+                    val tmdbEp = tmdbSeasonsData[ep.seasonNumber]?.get(ep.episodeNumber)
+                    if (tmdbEp != null) {
+                        ep.copy(
+                            title = tmdbEp.name.ifBlank { ep.title },
+                            thumbnail = tmdbEp.stillUrl ?: ep.thumbnail ?: enrichedBackdrop ?: enrichedPoster ?: sitePoster,
+                            description = tmdbEp.overview?.ifBlank { ep.description } ?: ep.description,
+                            duration = tmdbEp.duration ?: ep.duration
+                        )
+                    } else {
+                        ep.copy(
+                            thumbnail = ep.thumbnail ?: enrichedBackdrop ?: enrichedPoster ?: sitePoster
+                        )
+                    }
+                }
+                episodes.addAll(enrichedEpisodes)
             }
-            episodes.addAll(enrichedEpisodes)
         }
 
         MediaDetail(
-            id = TmdbBridge.sanitizeSlug(mediaItem.id.ifBlank { targetUrl.removePrefix(mainUrl).trim('/') }),
+            id = TmdbBridge.sanitizeSlug(mediaItem.id.ifBlank { targetUrl.removePrefix(mainUrl).trim('/') }.ifBlank { resolvedTmdbId ?: "media" }),
             title = siteTitle,
             url = targetUrl,
             posterUrl = enrichedPoster ?: sitePoster,
@@ -1356,7 +1399,7 @@ class FourKHDHubPlugin(
             } catch (_: Exception) {}
         }
 
-        downloadOptions
+        downloadOptions.filter { it.url.isNotBlank() && it.url.startsWith("http") }.distinctBy { it.url }
     }
 
     private suspend fun resolveVariantsOnDemand(episodeData: String): List<VariantLink> = withContext(Dispatchers.IO) {
@@ -1421,9 +1464,11 @@ class FourKHDHubPlugin(
             .trim()
             .trimEnd('_')
 
+        var tmdbIdCandidate: String? = null
         if (baseTarget.startsWith("{")) {
             try {
                 val root = json.parseToJsonElement(baseTarget).jsonObject
+                tmdbIdCandidate = root["tmdbId"]?.jsonPrimitive?.contentOrNull
                 baseTarget = root["url"]?.jsonPrimitive?.contentOrNull
                     ?: root["id"]?.jsonPrimitive?.contentOrNull
                     ?: root["title"]?.jsonPrimitive?.contentOrNull
@@ -1452,7 +1497,40 @@ class FourKHDHubPlugin(
         val finalDoc = doc ?: run {
             // Search fallback
             val searchQuery = baseTarget.ifBlank { trimmed }
-            if (searchQuery.isNotBlank() && !searchQuery.all { it.isDigit() }) {
+            var resolvedMatchDoc: Document? = null
+            val effectiveTmdbId = tmdbIdCandidate ?: if (searchQuery.isNotBlank() && searchQuery.all { it.isDigit() }) searchQuery else null
+
+            // 1. If searchQuery is pure numeric TMDB ID, or starts with tmdbId, look up canonical title from TMDB
+            if (!effectiveTmdbId.isNullOrBlank()) {
+                try {
+                    val enriched = TmdbBridge.fetchEnrichedDetails(client, effectiveTmdbId, hasSpecificEp, name, tmdbApiKey)
+                    if (enriched != null && enriched.title.isNotBlank()) {
+                        val searchResults = search(cleanTitleForDisplay(enriched.title))
+                        val hints = MatchHints(
+                            tmdbId = effectiveTmdbId.toIntOrNull() ?: 0,
+                            imdbId = enriched.imdbId,
+                            type = if (hasSpecificEp) ContentType.TV_SERIES else ContentType.MOVIE,
+                            titles = setOfNotNull(enriched.title).filter { it.isNotBlank() }.toSet(),
+                            year = enriched.year,
+                            runtimeMin = null
+                        )
+                        val bestMatch = searchResults
+                            .map { it to MatchScorer.score(hints, it) }
+                            .filter { it.second >= MatchScorer.THRESHOLD_VERIFY }
+                            .maxByOrNull { it.second }?.first
+                            ?: searchResults.firstOrNull()
+
+                        if (bestMatch != null) {
+                            resolvedUrl = bestMatch.url
+                            resolvedMatchDoc = try { client.getHtml(bestMatch.url, defaultHeaders) } catch (_: Exception) { null }
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+
+            if (resolvedMatchDoc != null) {
+                resolvedMatchDoc
+            } else if (searchQuery.isNotBlank() && !searchQuery.all { it.isDigit() }) {
                 try {
                     val searchResults = search(cleanTitleForDisplay(searchQuery))
                     val match = searchResults.firstOrNull()
@@ -1465,27 +1543,32 @@ class FourKHDHubPlugin(
         }
 
         if (finalDoc != null) {
-            val parsedEpisodes = parseSeriesEpisodes(finalDoc, null, "", resolvedUrl)
-            if (parsedEpisodes.isNotEmpty()) {
-                val matchedEp = if (hasSpecificEp) {
-                    parsedEpisodes.firstOrNull { it.seasonNumber == targetSeason && it.episodeNumber == targetEpisode }
-                        ?: parsedEpisodes.firstOrNull { it.seasonNumber == targetSeason }
-                        ?: parsedEpisodes.firstOrNull()
-                } else {
-                    parsedEpisodes.firstOrNull()
-                }
+            val isSeriesPage = resolvedUrl.contains("-series-", ignoreCase = true) ||
+                    finalDoc.select(".season-item, .episode-item, #episodes, .episode-downloads").isNotEmpty()
 
-                if (matchedEp != null && matchedEp.data.isNotBlank()) {
-                    try {
-                        val root = json.parseToJsonElement(matchedEp.data).jsonObject
-                        val varArr = root["variants"]?.jsonArray
-                        varArr?.forEach { elem ->
-                            try {
-                                val v = json.decodeFromJsonElement(VariantLink.serializer(), elem)
-                                foundVariants.add(v)
-                            } catch (_: Exception) {}
-                        }
-                    } catch (_: Exception) {}
+            if (isSeriesPage) {
+                val parsedEpisodes = parseSeriesEpisodes(finalDoc, null, "", resolvedUrl)
+                if (parsedEpisodes.isNotEmpty()) {
+                    val matchedEp = if (hasSpecificEp) {
+                        parsedEpisodes.firstOrNull { it.seasonNumber == targetSeason && it.episodeNumber == targetEpisode }
+                            ?: parsedEpisodes.firstOrNull { it.seasonNumber == targetSeason }
+                            ?: parsedEpisodes.firstOrNull()
+                    } else {
+                        parsedEpisodes.firstOrNull()
+                    }
+
+                    if (matchedEp != null && matchedEp.data.isNotBlank()) {
+                        try {
+                            val root = json.parseToJsonElement(matchedEp.data).jsonObject
+                            val varArr = root["variants"]?.jsonArray
+                            varArr?.forEach { elem ->
+                                try {
+                                    val v = json.decodeFromJsonElement(VariantLink.serializer(), elem)
+                                    foundVariants.add(v)
+                                } catch (_: Exception) {}
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
             } else {
                 val movieVariants = parseMovieDownloadVariants(finalDoc)

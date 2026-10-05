@@ -48,28 +48,41 @@ class OneShowsPlugin(
     override val mainUrl: String = "https://www.1shows.bz"
     override val supportedTypes: Set<MediaType> = setOf(MediaType.MOVIE, MediaType.TV_SERIES)
 
+    @Volatile
+    protected var host: HostApi? = null
+
+    override fun init(host: HostApi) {
+        this.host = host
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val defaultHeaders = mapOf(
-        "Referer" to "https://www.1shows.bz/",
-        "Origin" to "https://www.1shows.bz",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Ranges" to "bytes"
-    )
+    private val defaultUserAgent: String
+        get() = host?.defaultUserAgent ?: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-    private val vidukiHeaders = mapOf(
-        "Referer" to "https://www.1shows.bz/",
-        "Origin" to "https://www.1shows.bz",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Ranges" to "bytes"
-    )
+    private val defaultHeaders: Map<String, String>
+        get() = mapOf(
+            "Referer" to "$mainUrl/",
+            "Origin" to mainUrl,
+            "User-Agent" to defaultUserAgent,
+            "Accept-Ranges" to "bytes"
+        )
 
-    private val vidzeeHeaders = mapOf(
-        "Referer" to "https://player.vidzee.wtf/",
-        "Origin" to "https://player.vidzee.wtf",
-        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Ranges" to "bytes"
-    )
+    private val vidukiHeaders: Map<String, String>
+        get() = mapOf(
+            "Referer" to "$mainUrl/",
+            "Origin" to mainUrl,
+            "User-Agent" to defaultUserAgent,
+            "Accept-Ranges" to "bytes"
+        )
+
+    private val vidzeeHeaders: Map<String, String>
+        get() = mapOf(
+            "Referer" to "https://player.vidzee.wtf/",
+            "Origin" to "https://player.vidzee.wtf",
+            "User-Agent" to defaultUserAgent,
+            "Accept-Ranges" to "bytes"
+        )
 
     private val logoCache = ConcurrentHashMap<String, String>()
 
@@ -123,50 +136,51 @@ class OneShowsPlugin(
     private fun fetchCatalogRow(title: String, url: String): CatalogRow? {
         try {
             val req = newRequestBuilder(url).build()
-            val resp = client.newCall(req).execute()
-            if (!resp.isSuccessful) return null
-
-            val body = resp.body?.string() ?: return null
-            val root = json.parseToJsonElement(body).jsonObject
-            val resultsArr = root["results"]?.jsonArray ?: return null
-
             val items = mutableListOf<MediaItem>()
-            for (elem in resultsArr) {
-                val obj = elem.jsonObject
-                val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
-                val isTv = url.contains("/tv") || obj.containsKey("first_air_date") || obj.containsKey("name")
-                val itemTitle = obj["title"]?.jsonPrimitive?.contentOrNull
-                    ?: obj["name"]?.jsonPrimitive?.contentOrNull
-                    ?: "Unknown"
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
 
-                val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
-                val posterUrl = posterPath?.let {
-                    if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w500$it"
-                }
-                val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
-                val backdropUrl = backdropPath?.let {
-                    if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w1280$it"
-                } ?: posterUrl
+                val body = resp.body?.string() ?: return null
+                val root = json.parseToJsonElement(body).jsonObject
+                val resultsArr = root["results"]?.jsonArray ?: return null
 
-                val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
-                    ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
-                val year = dateStr?.take(4)?.toIntOrNull()
-                val vote = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+                for (elem in resultsArr) {
+                    val obj = elem.jsonObject
+                    val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                    val isTv = url.contains("/tv") || obj.containsKey("first_air_date") || obj.containsKey("name")
+                    val itemTitle = obj["title"]?.jsonPrimitive?.contentOrNull
+                        ?: obj["name"]?.jsonPrimitive?.contentOrNull
+                        ?: "Unknown"
 
-                items.add(
-                    MediaItem(
-                        id = id,
-                        title = itemTitle,
-                        url = "https://www.1shows.bz/${if (isTv) "tv" else "movie"}/$id",
-                        posterUrl = posterUrl,
-                        backdropUrl = backdropUrl,
-                        type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
-                        year = year,
-                        rating = vote?.let { String.format("%.1f", it) },
-                        quality = "1080p",
-                        provider = name
+                    val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
+                    val posterUrl = posterPath?.let {
+                        if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w500$it"
+                    }
+                    val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
+                    val backdropUrl = backdropPath?.let {
+                        if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w1280$it"
+                    } ?: posterUrl
+
+                    val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
+                        ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
+                    val year = dateStr?.take(4)?.toIntOrNull()
+                    val vote = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+
+                    items.add(
+                        MediaItem(
+                            id = id,
+                            title = itemTitle,
+                            url = "https://www.1shows.bz/${if (isTv) "tv" else "movie"}/$id",
+                            posterUrl = posterUrl,
+                            backdropUrl = backdropUrl,
+                            type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
+                            year = year,
+                            rating = vote?.let { String.format("%.1f", it) },
+                            quality = "1080p",
+                            provider = name
+                        )
                     )
-                )
+                }
             }
 
             return if (items.isNotEmpty()) CatalogRow(title = title, items = items) else null
@@ -183,51 +197,52 @@ class OneShowsPlugin(
         try {
             val url = "https://www.1shows.bz/api/search/query?query=$encodedQuery"
             val req = newRequestBuilder(url).build()
-            val resp = client.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string() ?: ""
-                val root = json.parseToJsonElement(body).jsonObject
-                val resultsArr = root["results"]?.jsonArray
-                if (resultsArr != null) {
-                    for (elem in resultsArr) {
-                        val obj = elem.jsonObject
-                        val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull ?: continue
-                        if (mediaTypeStr != "movie" && mediaTypeStr != "tv") continue
-                        val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
-                        if (!seenIds.add(id)) continue
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    val root = json.parseToJsonElement(body).jsonObject
+                    val resultsArr = root["results"]?.jsonArray
+                    if (resultsArr != null) {
+                        for (elem in resultsArr) {
+                            val obj = elem.jsonObject
+                            val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull ?: continue
+                            if (mediaTypeStr != "movie" && mediaTypeStr != "tv") continue
+                            val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                            if (!seenIds.add(id)) continue
 
-                        val title = obj["title"]?.jsonPrimitive?.contentOrNull
-                            ?: obj["name"]?.jsonPrimitive?.contentOrNull
-                            ?: "Unknown"
-                        val type = if (mediaTypeStr == "tv") MediaType.TV_SERIES else MediaType.MOVIE
-                        val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
-                        val posterUrl = posterPath?.let {
-                            if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w500$it"
-                        }
-                        val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
-                        val backdropUrl = backdropPath?.let {
-                            if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w1280$it"
-                        } ?: posterUrl
+                            val title = obj["title"]?.jsonPrimitive?.contentOrNull
+                                ?: obj["name"]?.jsonPrimitive?.contentOrNull
+                                ?: "Unknown"
+                            val type = if (mediaTypeStr == "tv") MediaType.TV_SERIES else MediaType.MOVIE
+                            val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
+                            val posterUrl = posterPath?.let {
+                                if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w500$it"
+                            }
+                            val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
+                            val backdropUrl = backdropPath?.let {
+                                if (it.startsWith("http")) it else "https://image.tmdb.org/t/p/w1280$it"
+                            } ?: posterUrl
 
-                        val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
-                            ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
-                        val year = dateStr?.take(4)?.toIntOrNull()
-                        val vote = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
+                            val dateStr = obj["release_date"]?.jsonPrimitive?.contentOrNull
+                                ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull
+                            val year = dateStr?.take(4)?.toIntOrNull()
+                            val vote = obj["vote_average"]?.jsonPrimitive?.doubleOrNull
 
-                        results.add(
-                            MediaItem(
-                                id = id,
-                                title = title,
-                                url = "https://www.1shows.bz/$mediaTypeStr/$id",
-                                posterUrl = posterUrl,
-                                backdropUrl = backdropUrl,
-                                type = type,
-                                year = year,
-                                rating = vote?.let { String.format("%.1f", it) },
-                                quality = "1080p",
-                                provider = name
+                            results.add(
+                                MediaItem(
+                                    id = id,
+                                    title = title,
+                                    url = "https://www.1shows.bz/$mediaTypeStr/$id",
+                                    posterUrl = posterUrl,
+                                    backdropUrl = backdropUrl,
+                                    type = type,
+                                    year = year,
+                                    rating = vote?.let { String.format("%.1f", it) },
+                                    quality = "1080p",
+                                    provider = name
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
@@ -255,51 +270,52 @@ class OneShowsPlugin(
         try {
             val url = "https://www.1shows.bz/api/$typeStr/$tmdbId"
             val req = newRequestBuilder(url).build()
-            val resp = client.newCall(req).execute()
-            if (resp.isSuccessful) {
-                val body = resp.body?.string() ?: ""
-                val root = json.parseToJsonElement(body).jsonObject
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    val root = json.parseToJsonElement(body).jsonObject
 
-                siteTitle = root["title"]?.jsonPrimitive?.contentOrNull
-                    ?: root["name"]?.jsonPrimitive?.contentOrNull
-                siteSynopsis = root["overview"]?.jsonPrimitive?.contentOrNull
+                    siteTitle = root["title"]?.jsonPrimitive?.contentOrNull
+                        ?: root["name"]?.jsonPrimitive?.contentOrNull
+                    siteSynopsis = root["overview"]?.jsonPrimitive?.contentOrNull
 
-                val posterPath = root["poster_path"]?.jsonPrimitive?.contentOrNull
-                if (posterPath != null) {
-                    sitePoster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w500$posterPath"
-                }
+                    val posterPath = root["poster_path"]?.jsonPrimitive?.contentOrNull
+                    if (posterPath != null) {
+                        sitePoster = if (posterPath.startsWith("http")) posterPath else "https://image.tmdb.org/t/p/w500$posterPath"
+                    }
 
-                val backdropPath = root["backdrop_path"]?.jsonPrimitive?.contentOrNull
-                if (backdropPath != null) {
-                    siteBackdrop = if (backdropPath.startsWith("http")) backdropPath else "https://image.tmdb.org/t/p/w1280$backdropPath"
-                }
+                    val backdropPath = root["backdrop_path"]?.jsonPrimitive?.contentOrNull
+                    if (backdropPath != null) {
+                        siteBackdrop = if (backdropPath.startsWith("http")) backdropPath else "https://image.tmdb.org/t/p/w1280$backdropPath"
+                    }
 
-                val dateStr = root["release_date"]?.jsonPrimitive?.contentOrNull
-                    ?: root["first_air_date"]?.jsonPrimitive?.contentOrNull
-                siteYear = dateStr?.take(4)?.toIntOrNull()
+                    val dateStr = root["release_date"]?.jsonPrimitive?.contentOrNull
+                        ?: root["first_air_date"]?.jsonPrimitive?.contentOrNull
+                    siteYear = dateStr?.take(4)?.toIntOrNull()
 
-                val vote = root["vote_average"]?.jsonPrimitive?.doubleOrNull
-                if (vote != null) {
-                    siteRating = String.format("%.1f", vote)
-                }
+                    val vote = root["vote_average"]?.jsonPrimitive?.doubleOrNull
+                    if (vote != null) {
+                        siteRating = String.format("%.1f", vote)
+                    }
 
-                siteImdbId = root["imdb_id"]?.jsonPrimitive?.contentOrNull
+                    siteImdbId = root["imdb_id"]?.jsonPrimitive?.contentOrNull
 
-                val gList = mutableListOf<String>()
-                root["genres"]?.jsonArray?.forEach { gElem ->
-                    val gName = gElem.jsonObject["name"]?.jsonPrimitive?.contentOrNull
-                    if (gName != null) gList.add(gName)
-                }
-                siteGenres = gList
+                    val gList = mutableListOf<String>()
+                    root["genres"]?.jsonArray?.forEach { gElem ->
+                        val gName = gElem.jsonObject["name"]?.jsonPrimitive?.contentOrNull
+                        if (gName != null) gList.add(gName)
+                    }
+                    siteGenres = gList
 
-                if (isTv) {
-                    val seasonsArr = root["seasons"]?.jsonArray
-                    if (seasonsArr != null) {
-                        validSeasons = seasonsArr.mapNotNull { sElem ->
-                            val sObj = sElem.jsonObject
-                            val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
-                            if (sNum <= 0) return@mapNotNull null
-                            sNum
+                    if (isTv) {
+                        val seasonsArr = root["seasons"]?.jsonArray
+                        if (seasonsArr != null) {
+                            validSeasons = seasonsArr.mapNotNull { sElem ->
+                                val sObj = sElem.jsonObject
+                                val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                                if (sNum <= 0) return@mapNotNull null
+                                sNum
+                            }
                         }
                     }
                 }
