@@ -662,48 +662,46 @@ class CinejoyPlugin(
             } catch (_: Throwable) {}
         }
 
-        // 4. Cinejoy Aphrodite CDN Engine (High-speed edge CDN with Atlantic origin playback)
+        // 4. Cinejoy Native Solara Engine (1080p Master HLS with pre-flight verification)
         launch {
             try {
-                val aphPath = if (isTv && season != null && episode != null) {
-                    "/content/tv/$tmdbId/$season/$episode"
-                } else {
-                    "/content/movie/$tmdbId"
+                val solaraJson = withTimeoutOrNull(10000L) {
+                    CinejoyWasmEngine.requestStream(
+                        client = client,
+                        server = "Solara",
+                        type = if (isTv) "tv" else "movie",
+                        tmdbId = tmdbId,
+                        season = season,
+                        episode = episode
+                    )
                 }
+                if (solaraJson != null) {
+                    val root = json.parseToJsonElement(solaraJson).jsonObject
+                    val streamArr = root["data"]?.jsonObject?.get("stream")?.jsonArray
+                    if (streamArr != null) {
+                        for (streamElem in streamArr) {
+                            val sObj = streamElem.jsonObject
+                            val rawUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
+                            if (!rawUrl.startsWith("http")) continue
+                            if (rawUrl.contains("totallyacdn.org", ignoreCase = true)) continue // Never emit honeypot
 
-                val req = Request.Builder()
-                    .url("https://cdn.hls.lol$aphPath")
-                    .header("Referer", "https://atlantic.st/")
-                    .header("Origin", "https://atlantic.st")
-                    .header("User-Agent", defaultHeaders["User-Agent"]!!)
-                    .header("Accept", "application/json, text/plain, */*")
-                    .build()
+                            val isLive = withTimeoutOrNull(3000L) {
+                                isStreamReachable(rawUrl, defaultHeaders)
+                            } ?: false
 
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string()
-                        if (!body.isNullOrBlank()) {
-                            val root = json.parseToJsonElement(body).jsonObject
-                            val streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
-                                ?: root["hls"]?.jsonPrimitive?.contentOrNull
-                            if (streamUrl != null && streamUrl.startsWith("http")) {
-                                val aphHeaders = mapOf(
-                                    "Referer" to "https://atlantic.st/",
-                                    "Origin" to "https://atlantic.st",
-                                    "User-Agent" to defaultHeaders["User-Agent"]!!
-                                )
-                                val src = StreamSource(
-                                    url = streamUrl,
-                                    serverName = "Aphrodite (Direct 1080p)",
+                            if (isLive) {
+                                val solaraSource = StreamSource(
+                                    url = rawUrl,
+                                    serverName = "Solara (1080p)",
                                     resolutionLabel = "1080p FHD",
-                                    quality = "Cinejoy Aphrodite CDN (1080p FHD HLS)",
+                                    quality = "Cinejoy Solara (1080p FHD HLS)",
                                     isM3u8 = true,
                                     releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = aphHeaders
+                                    headers = defaultHeaders
                                 )
-                                val aphKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
-                                if (emittedStreamKeys.add(aphKey)) {
-                                    send(StreamEmission.SourceFound(src))
+                                val solaraKey = "${solaraSource.serverName}:${solaraSource.url}"
+                                if (emittedStreamKeys.add(solaraKey)) {
+                                    send(StreamEmission.SourceFound(solaraSource))
                                 }
                             }
                         }
@@ -712,39 +710,48 @@ class CinejoyPlugin(
             } catch (_: Throwable) {}
         }
 
-        // 5. Cinejoy Meridian & Link Engine (High-speed 1080p HLS mirrors)
+        // 5. Cinejoy Native Athens Engine (1080p HLS mirror with pre-flight verification)
         launch {
             try {
-                val meridianUrl = if (isTv && season != null && episode != null) {
-                    "https://meridian.aether.cx/show/$tmdbId/$season/$episode"
-                } else {
-                    "https://meridian.aether.cx/movie/$tmdbId"
+                val athensJson = withTimeoutOrNull(10000L) {
+                    CinejoyWasmEngine.requestStream(
+                        client = client,
+                        server = "Athens",
+                        type = if (isTv) "tv" else "movie",
+                        tmdbId = tmdbId,
+                        season = season,
+                        episode = episode
+                    )
                 }
-                val req = Request.Builder().url(meridianUrl).header("User-Agent", defaultHeaders["User-Agent"]!!).build()
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string() ?: ""
-                        val root = json.parseToJsonElement(body).jsonObject
-                        val streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
-                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
-                            val streamHost = try { URI(streamUrl).host } catch (_: Exception) { null } ?: "aether.cx"
-                            val playbackHeaders = mapOf(
-                                "Referer" to "https://$streamHost/",
-                                "Origin" to "https://$streamHost",
-                                "User-Agent" to defaultHeaders["User-Agent"]!!,
-                                "Accept-Ranges" to "bytes"
-                            )
-                            val src = StreamSource(
-                                url = streamUrl,
-                                serverName = "Meridian (1080p)",
-                                resolutionLabel = "1080p FHD",
-                                quality = "Cinejoy Meridian (1080p FHD HLS)",
-                                isM3u8 = true,
-                                releaseType = AudioReleaseType.ORIGINAL,
-                                headers = playbackHeaders
-                            )
-                            val meridianKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
-                            if (emittedStreamKeys.add(meridianKey)) send(StreamEmission.SourceFound(src))
+                if (athensJson != null) {
+                    val root = json.parseToJsonElement(athensJson).jsonObject
+                    val streamArr = root["data"]?.jsonObject?.get("stream")?.jsonArray
+                    if (streamArr != null) {
+                        for (streamElem in streamArr) {
+                            val sObj = streamElem.jsonObject
+                            val rawUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
+                            if (!rawUrl.startsWith("http")) continue
+                            if (rawUrl.contains("totallyacdn.org", ignoreCase = true)) continue
+
+                            val isLive = withTimeoutOrNull(3000L) {
+                                isStreamReachable(rawUrl, defaultHeaders)
+                            } ?: false
+
+                            if (isLive) {
+                                val athensSource = StreamSource(
+                                    url = rawUrl,
+                                    serverName = "Athens (1080p)",
+                                    resolutionLabel = "1080p FHD",
+                                    quality = "Cinejoy Athens (1080p FHD HLS)",
+                                    isM3u8 = true,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = defaultHeaders
+                                )
+                                val athensKey = "${athensSource.serverName}:${athensSource.url}"
+                                if (emittedStreamKeys.add(athensKey)) {
+                                    send(StreamEmission.SourceFound(athensSource))
+                                }
+                            }
                         }
                     }
                 }
