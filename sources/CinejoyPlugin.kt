@@ -1296,7 +1296,7 @@ class CinejoyPlugin(
             mediaItem.url.contains("/tv/") ||
             mediaItem.id.contains("tv", ignoreCase = true)
         var endpoint = if (isTv) "tv" else "movie"
-        var url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar"
+        var url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos"
         var req = Request.Builder().url(url).build()
 
         var title = mediaItem.title
@@ -1307,6 +1307,7 @@ class CinejoyPlugin(
         var genres = emptyList<String>()
         var rating: String? = null
         var duration: String? = null
+        var trailerUrl: String? = null
         val castMembers = mutableListOf<CastMember>()
         val allEpisodes = mutableListOf<EpisodeItem>()
         val recsList = mutableListOf<MediaItem>()
@@ -1317,7 +1318,7 @@ class CinejoyPlugin(
                     resp.body?.string().orEmpty()
                 } else if (resp.code == 404) {
                     val altEndpoint = if (isTv) "movie" else "tv"
-                    val altUrl = "https://api.themoviedb.org/3/$altEndpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar"
+                    val altUrl = "https://api.themoviedb.org/3/$altEndpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos"
                     val altReq = Request.Builder().url(altUrl).build()
                     try {
                         http.meta.newCall(altReq).execute().use { altResp ->
@@ -1353,6 +1354,21 @@ class CinejoyPlugin(
                     val runtimeMin = obj["runtime"]?.jsonPrimitive?.intOrNull
                         ?: obj["episode_run_time"]?.jsonArray?.firstOrNull()?.jsonPrimitive?.intOrNull
                     duration = runtimeMin?.let { "$it min" }
+
+                    val videosArr = obj["videos"]?.jsonObject?.get("results")?.jsonArray
+                    if (videosArr != null) {
+                        for (vElem in videosArr) {
+                            val vObj = (vElem as? JsonObject) ?: continue
+                            val site = vObj["site"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val type = vObj["type"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val key = vObj["key"]?.jsonPrimitive?.contentOrNull ?: continue
+                            if (site.equals("YouTube", ignoreCase = true) &&
+                                (type.equals("Trailer", ignoreCase = true) || type.equals("Teaser", ignoreCase = true))) {
+                                trailerUrl = "https://www.youtube.com/watch?v=$key"
+                                break
+                            }
+                        }
+                    }
 
                     val castArr = obj["credits"]?.jsonObject?.get("cast")?.jsonArray
                     castArr?.take(15)?.forEach { cElem ->
@@ -1481,7 +1497,8 @@ class CinejoyPlugin(
             cast = castMembers,
             episodes = allEpisodes,
             recommendations = recsList,
-            provider = name
+            provider = name,
+            trailerUrl = trailerUrl
         )
     }
 
