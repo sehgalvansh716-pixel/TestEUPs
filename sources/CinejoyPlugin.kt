@@ -940,11 +940,24 @@ class CinejoyPlugin(
     override suspend fun getHomeCatalog(): List<CatalogRow> = withContext(Dispatchers.IO) {
         coroutineScope {
             val categories = listOf(
-                "Trending On Cinejoy" to "https://api.themoviedb.org/3/trending/all/day?api_key=$tmdbApiKey",
+                "Trending Movies & Series" to "https://api.themoviedb.org/3/trending/all/day?api_key=$tmdbApiKey",
                 "Now Playing in Theatres" to "https://api.themoviedb.org/3/movie/now_playing?api_key=$tmdbApiKey",
+                "Top Rated Movies" to "https://api.themoviedb.org/3/movie/top_rated?api_key=$tmdbApiKey",
                 "Popular Movies" to "https://api.themoviedb.org/3/movie/popular?api_key=$tmdbApiKey",
-                "Top Rated TV Shows" to "https://api.themoviedb.org/3/tv/top_rated?api_key=$tmdbApiKey",
-                "Popular TV Series" to "https://api.themoviedb.org/3/tv/popular?api_key=$tmdbApiKey"
+                "Trending Web Series" to "https://api.themoviedb.org/3/trending/tv/day?api_key=$tmdbApiKey",
+                "Popular TV Shows" to "https://api.themoviedb.org/3/tv/popular?api_key=$tmdbApiKey",
+                "Top Rated TV Series" to "https://api.themoviedb.org/3/tv/top_rated?api_key=$tmdbApiKey",
+                "Airing Today" to "https://api.themoviedb.org/3/tv/on_the_air?api_key=$tmdbApiKey",
+                "Action & Adventure Blockbusters" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=28,12&sort_by=popularity.desc",
+                "Sci-Fi & Fantasy Epics" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=878,14&sort_by=popularity.desc",
+                "Gripping Crime & Thrillers" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=80,53&sort_by=popularity.desc",
+                "Animation & Anime Hits" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=16&sort_by=popularity.desc",
+                "Top Comedy Movies" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=35&sort_by=popularity.desc",
+                "Chilling Horror Cinema" to "https://api.themoviedb.org/3/discover/movie?api_key=$tmdbApiKey&with_genres=27&sort_by=popularity.desc",
+                "Acclaimed Drama Series" to "https://api.themoviedb.org/3/discover/tv?api_key=$tmdbApiKey&with_genres=18&sort_by=popularity.desc",
+                "Sci-Fi & Fantasy TV" to "https://api.themoviedb.org/3/discover/tv?api_key=$tmdbApiKey&with_genres=10765&sort_by=popularity.desc",
+                "Mystery & Crime TV" to "https://api.themoviedb.org/3/discover/tv?api_key=$tmdbApiKey&with_genres=80,9648&sort_by=popularity.desc",
+                "Upcoming Cinema Releases" to "https://api.themoviedb.org/3/movie/upcoming?api_key=$tmdbApiKey"
             )
 
             val deferredRows = categories.map { (title, url) ->
@@ -963,7 +976,7 @@ class CinejoyPlugin(
                                     ?: obj["name"]?.jsonPrimitive?.contentOrNull
                                     ?: return@mapNotNull null
                                 val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull
-                                val isTv = mediaTypeStr == "tv" || url.contains("/tv/")
+                                val isTv = mediaTypeStr == "tv" || url.contains("/tv/") || url.contains("/tv?")
                                 val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
                                 val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
 
@@ -1028,11 +1041,24 @@ class CinejoyPlugin(
 
     // ───────────────────────────── PagedCatalog & Search (:eup-api) ─────────────────────────────
     override suspend fun sections(): List<CatalogSection> = listOf(
-        CatalogSection("trending", "Trending On Cinejoy"),
+        CatalogSection("trending", "Trending Movies & Series"),
         CatalogSection("theatres", "Now Playing in Theatres"),
+        CatalogSection("top_movies", "Top Rated Movies"),
         CatalogSection("popular_movies", "Popular Movies"),
-        CatalogSection("top_tv", "Top Rated TV Shows"),
-        CatalogSection("popular_tv", "Popular TV Series")
+        CatalogSection("trending_tv", "Trending Web Series"),
+        CatalogSection("popular_tv", "Popular TV Shows"),
+        CatalogSection("top_tv", "Top Rated TV Series"),
+        CatalogSection("on_the_air", "Airing Today"),
+        CatalogSection("action", "Action & Adventure"),
+        CatalogSection("scifi", "Sci-Fi & Fantasy"),
+        CatalogSection("thriller", "Crime & Thrillers"),
+        CatalogSection("animation", "Animation & Anime Hits"),
+        CatalogSection("comedy", "Comedy Movies"),
+        CatalogSection("horror", "Horror Cinema"),
+        CatalogSection("drama_tv", "Acclaimed Drama Series"),
+        CatalogSection("scifi_tv", "Sci-Fi & Fantasy TV"),
+        CatalogSection("mystery_tv", "Mystery & Crime TV"),
+        CatalogSection("upcoming", "Upcoming Cinema Releases")
     )
 
     override suspend fun load(section: CatalogSection, page: PageRequest): Page<MediaCard> = withContext(Dispatchers.IO) {
@@ -1040,12 +1066,26 @@ class CinejoyPlugin(
         val endpoint = when (section.id) {
             "trending" -> "trending/all/day"
             "theatres" -> "movie/now_playing"
+            "top_movies" -> "movie/top_rated"
             "popular_movies" -> "movie/popular"
-            "top_tv" -> "tv/top_rated"
+            "trending_tv" -> "trending/tv/day"
             "popular_tv" -> "tv/popular"
+            "top_tv" -> "tv/top_rated"
+            "on_the_air" -> "tv/on_the_air"
+            "action" -> "discover/movie?with_genres=28,12&sort_by=popularity.desc"
+            "scifi" -> "discover/movie?with_genres=878,14&sort_by=popularity.desc"
+            "thriller" -> "discover/movie?with_genres=80,53&sort_by=popularity.desc"
+            "animation" -> "discover/movie?with_genres=16&sort_by=popularity.desc"
+            "comedy" -> "discover/movie?with_genres=35&sort_by=popularity.desc"
+            "horror" -> "discover/movie?with_genres=27&sort_by=popularity.desc"
+            "drama_tv" -> "discover/tv?with_genres=18&sort_by=popularity.desc"
+            "scifi_tv" -> "discover/tv?with_genres=10765&sort_by=popularity.desc"
+            "mystery_tv" -> "discover/tv?with_genres=80,9648&sort_by=popularity.desc"
+            "upcoming" -> "movie/upcoming"
             else -> "trending/all/day"
         }
-        val url = "https://api.themoviedb.org/3/$endpoint?api_key=$tmdbApiKey&page=$pageNum"
+        val joiner = if (endpoint.contains("?")) "&" else "?"
+        val url = "https://api.themoviedb.org/3/$endpoint${joiner}api_key=$tmdbApiKey&page=$pageNum"
         val req = Request.Builder().url(url).build()
 
         try {
