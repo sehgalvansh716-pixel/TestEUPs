@@ -6,22 +6,25 @@
     {
       "id": "atlantic",
       "name": "Atlantic",
-      "version": 2,
-      "versionName": "1.1.0",
+      "version": 3,
+      "versionName": "1.2.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://atlantic.st",
-      "description": "High-speed 1080p HLS multi-server streaming with Helios & Natsuki subs (Decoupled EUP).",
+      "description": "High-speed 1080p HLS multi-server streaming with Moscow, Helios & Natsuki subs (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.AtlanticPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/atlantic.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "317c197e41a477e3eb21407ce9296f132ac9c2477ae2c2755d457494b2c1b870",
+      "sha256": "c1777fcc020ea31f48bce13ebbdf62229496ffa1f626e28f8b3cd9e2b74180ae",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 59720,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "uhdmovies",
@@ -35,13 +38,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/uhdmovies.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "381148aaf2061dbf697fcac795ded9b62b768fdb6d652f97e7cae77effd4d15c",
+      "sha256": "66d46c8348658254830516d37bd84d28edcc6381db7ed6f4a181ca2f1d5dab4c",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 49848,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "moviesleech",
@@ -55,13 +61,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/moviesleech.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "13feb09493a747aa098b368ea070a8dc1729f484775180b758af558bf6fa371f",
+      "sha256": "3b43074e492e92ff7ba7b87a2346de822597ff1aa1f8b7979f7fb1751f8425b6",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 55086,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "movy",
@@ -75,13 +84,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "3b7c5dda67ac46b47960cfc4c44fca018c194a41f1b7202105022908c89e84e8",
+      "sha256": "29dcccfebd69e6d4c29f1e5d9b021de9e4e0ad3ef55187ea89cb17ee5c91f812",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 42994,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "pvrplay",
@@ -95,13 +107,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/pvrplay.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "adcc77f68d8a30112d385c8e6beee3a283b52ea3d6cd02f438f8bf7d2a591684",
+      "sha256": "5d1e8cddfa9ed0924c34086e2c28f5da34ec4826208a7c340ebff8d29967f54d",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 36071,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "cinejoy",
@@ -115,33 +130,39 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "52fe42539aad035dd8d21f5f734c40fdb72f77af931d69831a402b9429cffd8a",
+      "sha256": "0a49b125fa2dd6a6bfa5ed23b6e840a30864115e66f631069e2697f623c55666",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 102325,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "aether",
       "name": "Aether",
-      "version": 6,
-      "versionName": "1.2.3",
+      "version": 7,
+      "versionName": "1.3.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://aether.ist",
-      "description": "Curated multi-provider streaming ecosystem with Helios, Aphrodite, Meridian, Lula, and Link multi-quality HLS mirrors, subtitles, and downloads (Decoupled EUP).",
+      "description": "Curated multi-provider streaming ecosystem with Helios, Moscow, Aphrodite, Meridian, Lula, and Link multi-quality HLS mirrors, subtitles, and downloads (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.AetherPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/aether.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "220125c5378d1190a02dbcdc4f49edfa9883134bd59b0f5576f1a0af2fda3df0",
+      "sha256": "8828e958c265b37b2eca177d2fe739c5a6fa08f9068cb3ed0a6ad4d3f22281a3",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 57100,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "1shows",
@@ -155,13 +176,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "e8465ae6b51c24e34e4e2b0008ccfb1333144d533d12d960d1ab1845494becdd",
+      "sha256": "4cf8ce03f32e84224d21a8e51b93578298bd2a1bd67008ebed4cd861da32faaa",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 72312,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "4khdhub",
@@ -175,13 +199,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d4c5561b9909f5656bf49d581cc80f72064d0eee8f8b0bce493a51a4fc3ef34c",
+      "sha256": "b9e4e958bcf9cb9f37f72c8a2916af073a9ceb9b4efe2739894be45753da26c1",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
-      ]
+      ],
+      "fileSize": 61669,
+      "isAdult": false,
+      "isVault": false
     },
     {
       "id": "hqporner",
@@ -195,13 +222,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/hqporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "c341e9b216e35a654d70da7b1b597a49f9f18ffd1dd4802d1230fce8f1e6b5d9",
+      "sha256": "33d1c016dde430882541f9c77f627d360a34f2c6b8b92e73de8a475d8795e236",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 15124,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "xvideos",
@@ -215,13 +243,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/xvideos.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "47b41e62e7a7876d5ad10994769f81e6ba57c4c73e9865813e51749dcc16e372",
+      "sha256": "d574378e751832360fadf963e00b32f54b08fe89a748625fea8278c4e7b08f34",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 16808,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "eporner",
@@ -235,13 +264,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/eporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "1af6ba3c19e951a86a17131cdbeb5b4218e9fe2e939883f6bdbc14369d72addc",
+      "sha256": "f36e967db7427b29fb729b76ba1a3af6beb5c87d61f2d51da622b5bd693afe58",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 18414,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "rule34video",
@@ -255,13 +285,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/rule34video.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "50e4a1cc2c69d36146734cf755141087809f7fd2d7ecd51b2561e9f7e81d7f2b",
+      "sha256": "3726837fc80b894957c9fd470f9d2fa7e2c1c37b72285c282c270f97789ddfa7",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 12426,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "beeg",
@@ -275,13 +306,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/beeg.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "daf63b4ce915f92d5fc90e1b6166f154a9fc9cf80f637dea71dc70ff7af2ded1",
+      "sha256": "01bc4e383374891d482f38a521c2b8c7ea83a85690367426ffa88f29aeda9a8f",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 15784,
+      "isAdult": true,
+      "isVault": true
     },
     {
       "id": "faphouse",
@@ -295,13 +327,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/faphouse.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "b645b2fcd09bbd725af48f9752af0bd366440708037bc03784e01b5350902a9d",
+      "sha256": "9a5cc2796aa25ce7469f5c52e7d8030273b027603d141b28b404ed41487835da",
       "isEup": true,
       "supportedTypes": [
-        "MOVIE",
-        "SERIES",
-        "ANIME"
-      ]
+        "ADULT"
+      ],
+      "fileSize": 15830,
+      "isAdult": true,
+      "isVault": true
     }
   ]
 }
