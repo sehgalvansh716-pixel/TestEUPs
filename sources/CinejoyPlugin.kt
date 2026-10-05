@@ -102,7 +102,7 @@ class CinejoyPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "cinejoy",
         name = "Cinejoy",
-        version = 8,
+        version = 9,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.CinejoyPlugin",
@@ -1296,7 +1296,7 @@ class CinejoyPlugin(
             mediaItem.url.contains("/tv/") ||
             mediaItem.id.contains("tv", ignoreCase = true)
         var endpoint = if (isTv) "tv" else "movie"
-        var url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos"
+        var url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos,external_ids"
         var req = Request.Builder().url(url).build()
 
         var title = mediaItem.title
@@ -1308,6 +1308,7 @@ class CinejoyPlugin(
         var rating: String? = null
         var duration: String? = null
         var trailerUrl: String? = null
+        var imdbId: String? = null
         val castMembers = mutableListOf<CastMember>()
         val allEpisodes = mutableListOf<EpisodeItem>()
         val recsList = mutableListOf<MediaItem>()
@@ -1318,7 +1319,7 @@ class CinejoyPlugin(
                     resp.body?.string().orEmpty()
                 } else if (resp.code == 404) {
                     val altEndpoint = if (isTv) "movie" else "tv"
-                    val altUrl = "https://api.themoviedb.org/3/$altEndpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos"
+                    val altUrl = "https://api.themoviedb.org/3/$altEndpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos,external_ids"
                     val altReq = Request.Builder().url(altUrl).build()
                     try {
                         http.meta.newCall(altReq).execute().use { altResp ->
@@ -1350,6 +1351,9 @@ class CinejoyPlugin(
                     }.orEmpty()
 
                     rating = obj["vote_average"]?.jsonPrimitive?.doubleOrNull?.let { "%.1f".format(it) }
+
+                    imdbId = obj["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull
+                        ?: obj["imdb_id"]?.jsonPrimitive?.contentOrNull
 
                     val runtimeMin = obj["runtime"]?.jsonPrimitive?.intOrNull
                         ?: obj["episode_run_time"]?.jsonArray?.firstOrNull()?.jsonPrimitive?.intOrNull
@@ -1482,6 +1486,8 @@ class CinejoyPlugin(
             allEpisodes.add(movieEp)
         }
 
+        val resolvedLogo = resolveLogo(mediaItem.copy(id = tmdbId, type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE))
+
         MediaDetail(
             id = tmdbId,
             title = title,
@@ -1498,7 +1504,9 @@ class CinejoyPlugin(
             episodes = allEpisodes,
             recommendations = recsList,
             provider = name,
-            trailerUrl = trailerUrl
+            trailerUrl = trailerUrl,
+            logoUrl = resolvedLogo,
+            imdbId = imdbId
         )
     }
 
@@ -1569,10 +1577,12 @@ class CinejoyPlugin(
 
     override suspend fun resolveLogo(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
         val tmdbId = extractTmdbId(mediaItem.id).ifBlank { extractTmdbId(mediaItem.url) }
-        logoCache[tmdbId]?.let { return@withContext it }
+        if (tmdbId.isNotBlank()) {
+            logoCache[tmdbId]?.let { return@withContext it }
+        }
         val isTv = mediaItem.type == MediaType.TV_SERIES
         val endpoint = if (isTv) "tv" else "movie"
-        val url = "https://api.themoviedb.org/3/$endpoint/$tmdbId/images?api_key=$tmdbApiKey"
+        val url = "https://api.themoviedb.org/3/$endpoint/$tmdbId/images?api_key=$tmdbApiKey&include_image_language=en,null"
         val req = Request.Builder().url(url).build()
 
         try {
@@ -1581,18 +1591,39 @@ class CinejoyPlugin(
                     val body = resp.body?.string().orEmpty()
                     val root = json.parseToJsonElement(body).jsonObject
                     val logos = root["logos"]?.jsonArray
-                    val englishLogo = logos?.firstOrNull {
-                        it.jsonObject["iso_639_1"]?.jsonPrimitive?.contentOrNull == "en"
-                    } ?: logos?.firstOrNull()
-                    val filePath = englishLogo?.jsonObject?.get("file_path")?.jsonPrimitive?.contentOrNull
-                    if (filePath != null) {
-                        val logoUrl = "https://image.tmdb.org/t/p/w500$filePath"
-                        logoCache[tmdbId] = logoUrl
-                        return@withContext logoUrl
+                    if (!logos.isNullOrEmpty()) {
+                        var bestPath: String? = null
+                        var bestScore = -1.0
+                        for (elem in logos) {
+                            val lObj = elem.jsonObject
+                            val fPath = lObj["file_path"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val lang = lObj["iso_639_1"]?.jsonPrimitive?.contentOrNull
+                            val vote = lObj["vote_average"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+                            val langBonus = if (lang == "en") 10.0 else 0.0
+                            val pngBonus = if (fPath.endsWith(".png", ignoreCase = true)) 5.0 else 0.0
+                            val score = vote + langBonus + pngBonus
+                            if (score > bestScore) {
+                                bestScore = score
+                                bestPath = fPath
+                            }
+                        }
+                        if (bestPath != null) {
+                            val logoUrl = "https://image.tmdb.org/t/p/w500$bestPath"
+                            logoCache[tmdbId] = logoUrl
+                            return@withContext logoUrl
+                        }
                     }
                 }
             }
         } catch (_: Throwable) {}
+
+        // Fallback: check Metahub if mediaItem id/url contains imdb
+        val imdb = Regex("""tt\d+""").find("${mediaItem.id} ${mediaItem.url}")?.value
+        if (imdb != null) {
+            val metaUrl = "https://images.metahub.space/logo/medium/$imdb/img.png"
+            if (tmdbId.isNotBlank()) logoCache[tmdbId] = metaUrl
+            return@withContext metaUrl
+        }
         null
     }
 

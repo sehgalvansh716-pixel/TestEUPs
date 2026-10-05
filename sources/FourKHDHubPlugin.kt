@@ -83,7 +83,7 @@ class FourKHDHubPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "4khdhub",
         name = "4KHDHub",
-        version = 6,
+        version = 8,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FourKHDHubPlugin",
@@ -484,8 +484,56 @@ class FourKHDHubPlugin(
 
         val dlGroups = mutableListOf<DlGroup>()
 
-        // 1. Scan `.file-title` blocks (Modern 4KHDHub Tailwind DOM)
-        val fileTitles = doc.select(".file-title")
+        // 1. Scan `.download-item` blocks containing episode file titles or PSA episode badges
+        val episodeItems = doc.select(".download-item:has(.episode-file-title), .download-item:has(.badge-psa), .download-item:has(.episode-links), .episode-download-item")
+        for (item in episodeItems) {
+            val itemHead = item.selectFirst(".episode-file-title")?.text()?.trim()
+                ?: item.selectFirst(".file-title")?.text()?.trim() ?: ""
+            val badgePsa = item.selectFirst(".badge-psa")?.text()?.trim() ?: ""
+            val badgeSize = item.selectFirst(".badge-size")?.text()?.trim()
+            val epNumHead = item.selectFirst(".episode-number")?.text()?.trim() ?: ""
+            val combined = "$itemHead $badgePsa $epNumHead"
+
+            val qMatch = reQ.find(combined)?.value?.lowercase() ?: "1080p"
+            val height = when (qMatch) { "2160p", "4k" -> 2160; "1080p" -> 1080; "720p" -> 720; else -> 1080 }
+            val seasonNum = reSeason.find(epNumHead)?.groupValues?.get(1)?.toIntOrNull()
+                ?: reSeason.find(combined)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            val epNum = reEp.find(badgePsa)?.groupValues?.get(1)?.toIntOrNull()
+                ?: reEp.find(combined)?.groupValues?.get(1)?.toIntOrNull()
+
+            val isHdr = Regex("""HDR|DV|Dolby\s*Vision""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+            val is10Bit = Regex("""10[-\s]?bit""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+            val isHevc = Regex("""HEVC|x265|H\.?265""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+            val size = badgeSize ?: reSize.find(combined)?.value
+
+            val links = item.select(".episode-links a[href], a[href]").mapNotNull { a ->
+                val href = a.absUrl("href")
+                if (href.isBlank() || SiteConfig.BLOCKED_HOSTS.any { href.contains(it) }) return@mapNotNull null
+                val label = a.text().trim().ifBlank { a.attr("title").ifBlank { "Download Mirror" } }
+                DlLink(label = label, url = href, episode = epNum)
+            }.distinctBy { it.url }
+
+            if (links.isNotEmpty()) {
+                dlGroups.add(
+                    DlGroup(
+                        season = seasonNum,
+                        height = height,
+                        isHdr = isHdr,
+                        is10Bit = is10Bit,
+                        isHevc = isHevc,
+                        size = size,
+                        title = itemHead.ifBlank { "$title S${seasonNum}E${epNum ?: 1}" }.take(160),
+                        links = links
+                    )
+                )
+            }
+        }
+
+        // 2. Scan `.file-title` blocks (Modern 4KHDHub Tailwind DOM / Movies / Full Season Packs)
+        // Exclude file-title elements that were already part of an episode download-item above
+        val fileTitles = doc.select(".file-title").filter { ft ->
+            ft.parents().none { it.hasClass("download-item") && (it.selectFirst(".episode-file-title") != null || it.selectFirst(".badge-psa") != null) }
+        }
         for (ft in fileTitles) {
             val head = ft.text().trim()
             val qMatch = reQ.find(head)?.value?.lowercase() ?: "1080p"
@@ -503,6 +551,7 @@ class FourKHDHubPlugin(
                 if (href.isBlank() || SiteConfig.BLOCKED_HOSTS.any { href.contains(it) }) return@mapNotNull null
                 val label = a.text().trim().ifBlank { a.attr("title").ifBlank { "Download Mirror" } }
                 val epMatch = reEp.find(label)?.groupValues?.get(1)?.toIntOrNull()
+                    ?: reEp.find(head)?.groupValues?.get(1)?.toIntOrNull()
                 DlLink(label = label, url = href, episode = epMatch)
             }.distinctBy { it.url }
 
@@ -697,10 +746,12 @@ class FourKHDHubPlugin(
                                         }
 
                                         val serverLabel = "${cand.label} [${cand.kind.name}]"
-                                        val headersMap = mapOf(
-                                            "User-Agent" to defaultUserAgent,
-                                            "Accept-Ranges" to "bytes"
-                                        )
+                                        val ref = cand.referer ?: if (probe.url.contains("valentine.guru") || probe.url.contains("cocktail.beer") || probe.url.contains("gamerxyt")) "https://gamerxyt.com/" else null
+                                        val headersMap = buildMap {
+                                            put("User-Agent", defaultUserAgent)
+                                            put("Accept-Ranges", "bytes")
+                                            if (ref != null) put("Referer", ref)
+                                        }
 
                                         val coreSource = CoreStreamSource(
                                             url = probe.url,
@@ -782,6 +833,66 @@ class FourKHDHubPlugin(
 
     // ───────────────────────────── Downloads ─────────────────────────────
     override suspend fun getDownloadLinks(episodeData: String): List<DownloadOption> = withContext(Dispatchers.IO) {
+        val targetUrl = episodeData.substringBefore('?')
+        val sParam = Regex("""season=(\d+)""").find(episodeData)?.groupValues?.get(1)?.toIntOrNull()
+        val eParam = Regex("""episode=(\d+)""").find(episodeData)?.groupValues?.get(1)?.toIntOrNull()
+
+        val cached = try {
+            getCachedDetail(targetUrl, "")
+        } catch (_: Throwable) { null }
+
+        val groups = cached?.dlGroups?.filter { sParam == null || it.season == null || it.season == sParam }
+            ?.sortedWith(compareByDescending<DlGroup> { it.height }.thenByDescending { it.isHdr })
+            ?: emptyList()
+
+        val options = mutableListOf<DownloadOption>()
+        val emittedUrls = mutableSetOf<String>()
+
+        for (g in groups) {
+            val linksToTest = if (eParam == null) g.links else {
+                val exact = g.links.filter { it.episode == eParam }
+                if (exact.isNotEmpty()) exact else g.links.filter { it.episode == null }
+            }
+
+            for (dl in linksToTest.take(2)) {
+                try {
+                    val candidates = resolveIntermediary(dl.url, eParam)
+                    for (cand in candidates.take(2)) {
+                        val probe = verifyStream(cand) ?: continue
+                        if (emittedUrls.add(probe.url)) {
+                            val qualityLabel = buildString {
+                                append("${g.height}p")
+                                if (g.isHdr) append(" HDR")
+                                if (g.isHevc) append(" HEVC")
+                            }
+                            val ref = cand.referer ?: if (probe.url.contains("valentine.guru") || probe.url.contains("cocktail.beer") || probe.url.contains("gamerxyt")) "https://gamerxyt.com/" else null
+                            val headersMap = buildMap {
+                                put("User-Agent", defaultUserAgent)
+                                put("Accept-Ranges", "bytes")
+                                if (ref != null) put("Referer", ref)
+                            }
+                            options.add(
+                                DownloadOption(
+                                    title = "${cand.label} [$qualityLabel]",
+                                    quality = qualityLabel,
+                                    size = g.size ?: "~2.5 GB",
+                                    url = probe.url,
+                                    source = cand.label,
+                                    provider = name,
+                                    headers = headersMap
+                                )
+                            )
+                        }
+                    }
+                } catch (_: Throwable) {}
+            }
+            if (options.size >= 4) break
+        }
+
+        if (options.isNotEmpty()) {
+            return@withContext options.distinctBy { it.url }
+        }
+
         val streamResult = getStreamLinks(episodeData)
         streamResult.streams.map { s ->
             DownloadOption(
@@ -856,20 +967,38 @@ class FourKHDHubPlugin(
 
     private fun resolveHubDrive(url: String): String? {
         return try {
-            val req = Request.Builder().url(url).header("User-Agent", defaultUserAgent).header("Referer", "https://greenmotors.club/").build()
+            val req = Request.Builder().url(url).header("User-Agent", defaultUserAgent).header("Referer", "https://greenmotors.cc/").build()
             val html = http.scrape.newCall(req).execute().use { r -> if (r.isSuccessful) r.body?.string().orEmpty() else "" }
             Regex("""href=['"](https?://[^/'"\s]*hubcloud[^/'"\s]*/drive/[^'"]+)['"]""").find(html)?.groupValues?.get(1)
         } catch (_: Throwable) { null }
     }
 
     private fun resolveHubCloud(url: String): String? {
-        return try {
-            val req = Request.Builder().url(url).header("User-Agent", defaultUserAgent).header("Referer", "https://greenmotors.club/").build()
-            val html = http.scrape.newCall(req).execute().use { r -> if (r.isSuccessful) r.body?.string().orEmpty() else "" }
-            Regex("""['"](https?://[^'"]*gamerxyt\.com/hubcloud\.php[^'"]*)['"]""").find(html)?.groupValues?.get(1)
-                ?: Regex("""id=['"]download['"]\s+href=['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
-                ?: Regex("""var\s+url\s*=\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
-        } catch (_: Throwable) { null }
+        val domainsToTry = mutableListOf<String>()
+        val uri = try { java.net.URI(url) } catch (_: Exception) { null }
+        if (uri?.host != null) domainsToTry.add(uri.host)
+        listOf("hubcloud.dad", "hubcloud.one", "hubcloud.art", "hubcloud.club", "hubcloud.link").forEach {
+            if (!domainsToTry.contains(it)) domainsToTry.add(it)
+        }
+
+        for (host in domainsToTry) {
+            val targetUrl = if (uri?.host != null) url.replace(uri.host, host) else url
+            try {
+                val req = Request.Builder()
+                    .url(targetUrl)
+                    .header("User-Agent", defaultUserAgent)
+                    .header("Referer", "https://greenmotors.cc/")
+                    .build()
+                val html = http.scrape.newCall(req).execute().use { r -> if (r.isSuccessful) r.body?.string().orEmpty() else "" }
+                if (html.isNotBlank()) {
+                    val match = Regex("""['"](https?://[^'"]*gamerxyt\.com/hubcloud\.php[^'"]*)['"]""").find(html)?.groupValues?.get(1)
+                        ?: Regex("""id=['"]download['"]\s+href=['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
+                        ?: Regex("""var\s+url\s*=\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
+                    if (match != null) return match
+                }
+            } catch (_: Throwable) {}
+        }
+        return null
     }
 
     private fun resolveGamerxyt(gamerUrl: String, episodeNum: Int?): List<MirrorCandidate> {
@@ -1030,9 +1159,13 @@ class FourKHDHubPlugin(
     }
 
     private fun cleanTitle(raw: String): String {
-        return raw.replace(Regex("""(?i)\b(Download|Free|Watch|Online|4khdhub|com|4k-hdhub)\b"""), "")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
+        var s = raw.replace(Regex("""(?i)\b(Download|Free|Watch|Online|4khdhub|com|4k-hdhub)\b"""), " ")
+        s = s.replace(Regex("""\[.*?\]"""), " ")
+        s = s.replace(Regex("""\((?:19|20)\d{2}\)"""), " ")
+        s = s.replace(Regex("""\(.*?\)"""), " ")
+        s = s.replace(Regex("""(?i)\b(?:4k|2160p|1080p|720p|480p|uhd|fhd|hd|bluray|blu-ray|web-dl|webrip|brrip|dvdrip|hdtv|remux|hevc|x265|x264|avc|10bit|hdr|dovi|sdr|aac|atmos|ddp|truehd|multi|dual\s*audio|hindi|english|season\s*\d+|s\d+e\d+|series)\b"""), " ")
+        s = s.replace(Regex("""[._-]"""), " ")
+        return s.replace(Regex("""\s+"""), " ").trim()
     }
 
     private fun norm(s: String): String =
