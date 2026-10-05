@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -31,9 +32,11 @@ import javax.crypto.spec.SecretKeySpec
  * - TV season and episode breakdown with 16:9 stills, canonical titles, synopses, and durations
  * - Multi-Server Live Streaming Engine:
  *     1. Helios: Direct 1080p FHD, 720p HD, and 480p SD streams extracted from AES-GCM payload with authentic headers
- *     2. Aphrodite: High-speed edge CDN (cdn.hls.lol) with Atlantic origin playback
+ *     2. Moscow: Native high-speed proxy cluster (stream.hls.lol/moscow)
  *     3. Meridian: High-speed 1080p HLS stream (meridian.aether.cx) with Neuronix CDN playback
- *     4. Lul: Multi-audio HLS master playlist (lul.aether.cx) with Cloudflare Worker edge playback
+ *     4. Lula: Multi-audio HLS master playlist (lul.aether.cx) with Cloudflare Worker edge playback
+ *     5. Link: Multi-quality HLS stream (link.aether.cx)
+ *     6. Aphrodite: High-speed edge CDN (cdn.hls.lol) with Atlantic origin playback
  * - Multilingual Subtitle Engine:
  *     - Granite API (sub.vdrk.site) 60+ languages
  *     - Natsuki API (natsuki.hls.lol) 250+ languages
@@ -63,6 +66,7 @@ class AetherPlugin(
     )
 
     private val heliosKeyHex = "117c358bcfcaf8fe2cfca57c9d2238a300e1c4de2efb83a5012ba84d8a31f1dd"
+    private val moscowKeyHex = "55060a042823f51a94c296894a58a0db15f3baef807155140983083fa799ef47"
 
     private val logoCache = ConcurrentHashMap<String, String>()
 
@@ -471,6 +475,7 @@ class AetherPlugin(
                                 val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
                                 val decryptedUrl = decryptHeliosUrl(encUrl) ?: continue
                                 if (!decryptedUrl.startsWith("http")) continue
+                                if (decryptedUrl.contains("totallyacdn.org", ignoreCase = true)) continue
 
                                 // 1. Parse individual direct quality variants from "q" query parameter
                                 val qParam = decryptedUrl.substringAfter("?q=", "").substringBefore("&")
@@ -500,6 +505,7 @@ class AetherPlugin(
                                             for (vElem in variantsArr) {
                                                 val vObj = vElem.jsonObject
                                                 val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                                if (vUrl.contains("totallyacdn.org", ignoreCase = true)) continue
                                                 val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
                                                 val qualityLabel = when {
                                                     vQuality.contains("1080") -> "1080p FHD"
@@ -507,17 +513,24 @@ class AetherPlugin(
                                                     vQuality.contains("480") -> "480p SD"
                                                     else -> vQuality
                                                 }
-                                                val src = StreamSource(
-                                                    url = vUrl,
-                                                    serverName = "Helios ($qualityLabel)",
-                                                    resolutionLabel = qualityLabel,
-                                                    quality = "Aether Helios ($qualityLabel HLS)",
-                                                    isM3u8 = true,
-                                                    releaseType = AudioReleaseType.ORIGINAL,
-                                                    headers = reqHeaders
-                                                )
-                                                val streamKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
-                                                if (emittedStreamKeys.add(streamKey)) send(StreamEmission.SourceFound(src))
+
+                                                val isLive = withTimeoutOrNull(3000L) {
+                                                    isStreamReachable(vUrl, reqHeaders)
+                                                } ?: false
+
+                                                if (isLive) {
+                                                    val src = StreamSource(
+                                                        url = vUrl,
+                                                        serverName = "Helios ($qualityLabel)",
+                                                        resolutionLabel = qualityLabel,
+                                                        quality = "Aether Helios ($qualityLabel HLS)",
+                                                        isM3u8 = true,
+                                                        releaseType = AudioReleaseType.ORIGINAL,
+                                                        headers = reqHeaders
+                                                    )
+                                                    val streamKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                                                    if (emittedStreamKeys.add(streamKey)) send(StreamEmission.SourceFound(src))
+                                                }
                                             }
                                         }
                                     } catch (_: Exception) {}
@@ -529,17 +542,23 @@ class AetherPlugin(
                                     "Origin" to "https://stream.hls.lol",
                                     "User-Agent" to defaultHeaders["User-Agent"]!!
                                 )
-                                val masterSrc = StreamSource(
-                                    url = decryptedUrl,
-                                    serverName = "Helios ($serverName Auto)",
-                                    resolutionLabel = "Auto",
-                                    quality = "Aether Helios ($serverName Auto HLS)",
-                                    isM3u8 = true,
-                                    releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = heliosMasterHeaders
-                                )
-                                val masterKey = "${masterSrc.serverName}:${masterSrc.resolutionLabel}:${masterSrc.url}"
-                                if (emittedStreamKeys.add(masterKey)) send(StreamEmission.SourceFound(masterSrc))
+                                val isMasterLive = withTimeoutOrNull(3000L) {
+                                    isStreamReachable(decryptedUrl, heliosMasterHeaders)
+                                } ?: false
+
+                                if (isMasterLive) {
+                                    val masterSrc = StreamSource(
+                                        url = decryptedUrl,
+                                        serverName = "Helios ($serverName Auto)",
+                                        resolutionLabel = "Auto",
+                                        quality = "Aether Helios ($serverName Auto HLS)",
+                                        isM3u8 = true,
+                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        headers = heliosMasterHeaders
+                                    )
+                                    val masterKey = "${masterSrc.serverName}:${masterSrc.resolutionLabel}:${masterSrc.url}"
+                                    if (emittedStreamKeys.add(masterKey)) send(StreamEmission.SourceFound(masterSrc))
+                                }
                             }
                         }
                     }
@@ -547,7 +566,20 @@ class AetherPlugin(
             } catch (_: Exception) {}
         }
 
-        // 2. Aphrodite CDN (High-speed multi-edge & multi-quality mirrors)
+        // 2. Moscow Native High-Speed Proxy Engine (transcode.cfd cluster)
+        launch {
+            try {
+                val moscowStreams = fetchMoscowStreams(tmdbId, isTv, season, episode)
+                moscowStreams.forEach { stream ->
+                    val key = "${stream.serverName}:${stream.resolutionLabel}:${stream.url}"
+                    if (emittedStreamKeys.add(key)) {
+                        send(StreamEmission.SourceFound(stream))
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 3. Aphrodite CDN (High-speed multi-edge & multi-quality mirrors)
         launch {
             try {
                 val aphroditeStreams = fetchAphroditeStreams(tmdbId, isTv, season, episode)
@@ -560,7 +592,7 @@ class AetherPlugin(
             } catch (_: Throwable) {}
         }
 
-        // 3. Meridian Engine
+        // 4. Meridian Engine
         launch {
             try {
                 val meridianUrl = if (isTv && season != null && episode != null) {
@@ -574,7 +606,7 @@ class AetherPlugin(
                         val body = resp.body?.string() ?: ""
                         val root = json.parseToJsonElement(body).jsonObject
                         val streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
-                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http") && !streamUrl.contains("totallyacdn.org", ignoreCase = true)) {
                             val streamHost = URI(streamUrl).host
                             val playbackHeaders = mapOf(
                                 "Referer" to "https://$streamHost/",
@@ -582,17 +614,30 @@ class AetherPlugin(
                                 "User-Agent" to defaultHeaders["User-Agent"]!!,
                                 "Accept-Ranges" to "bytes"
                             )
-                            val src = StreamSource(
-                                url = streamUrl,
-                                serverName = "Meridian (1080p)",
-                                resolutionLabel = "1080p FHD",
-                                quality = "Aether Meridian (1080p FHD HLS)",
-                                isM3u8 = true,
-                                releaseType = AudioReleaseType.ORIGINAL,
-                                headers = playbackHeaders
-                            )
-                            val meridianKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
-                            if (emittedStreamKeys.add(meridianKey)) send(StreamEmission.SourceFound(src))
+
+                            val isLive = withTimeoutOrNull(3000L) {
+                                isStreamReachable(streamUrl, playbackHeaders)
+                            } ?: false
+
+                            if (isLive) {
+                                val src = StreamSource(
+                                    url = streamUrl,
+                                    serverName = "Meridian (1080p)",
+                                    resolutionLabel = "1080p FHD",
+                                    quality = "Aether Meridian (1080p FHD HLS)",
+                                    isM3u8 = true,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = playbackHeaders
+                                )
+                                val meridianKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                                if (emittedStreamKeys.add(meridianKey)) send(StreamEmission.SourceFound(src))
+
+                                val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Meridian", playbackHeaders)
+                                variants.forEach { v ->
+                                    val vKey = "${v.serverName}:${v.resolutionLabel}:${v.url}"
+                                    if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(v))
+                                }
+                            }
                         }
                         root["subtitles"]?.jsonArray?.forEach { subElem ->
                             val subObj = subElem.jsonObject
@@ -610,7 +655,7 @@ class AetherPlugin(
             } catch (_: Exception) {}
         }
 
-        // 4. Lul Multi-Audio Engine
+        // 5. Lula Multi-Audio Engine
         launch {
             try {
                 val lulUrl = if (isTv && season != null && episode != null) {
@@ -625,45 +670,52 @@ class AetherPlugin(
                         val root = json.parseToJsonElement(body).jsonObject
                         val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
                             ?: root["stream_url"]?.jsonPrimitive?.contentOrNull
-                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http") && !streamUrl.contains("totallyacdn.org", ignoreCase = true)) {
                             val lulHeaders = mapOf(
                                 "Referer" to "https://aether.ist/",
                                 "Origin" to "https://aether.ist",
                                 "User-Agent" to defaultHeaders["User-Agent"]!!
                             )
-                            val (audioBadge, manifestSubs) = inspectLulManifest(streamUrl)
-                            val badge = if (audioBadge.isNotBlank()) {
-                                "Aether Lula ($audioBadge Auto/1080p HLS)"
-                            } else {
-                                "Aether Lula (Auto/1080p HLS)"
-                            }
-                            val relType = if (audioBadge.isNotBlank()) AudioReleaseType.DUAL_AUDIO else AudioReleaseType.ORIGINAL
-                            val src = StreamSource(
-                                url = streamUrl,
-                                serverName = "Lula (Auto)",
-                                resolutionLabel = "Auto",
-                                quality = badge,
-                                isM3u8 = true,
-                                releaseType = relType,
-                                headers = lulHeaders
-                            )
-                            val lulKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
-                            if (emittedStreamKeys.add(lulKey)) send(StreamEmission.SourceFound(src))
 
-                            // Extract individual variants from Lula master playlist
-                            val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Lula", lulHeaders)
-                            variants.forEach { v ->
-                                val vSrc = v.copy(serverName = "Lula (${v.resolutionLabel})")
-                                val vKey = "${vSrc.serverName}:${vSrc.resolutionLabel}:${vSrc.url}"
-                                if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(vSrc))
-                            }
+                            val isLive = withTimeoutOrNull(3000L) {
+                                isStreamReachable(streamUrl, lulHeaders)
+                            } ?: false
 
-                            for ((subUrl, subLang) in manifestSubs) {
-                                val isHi = subLang.contains("[CC]", ignoreCase = true)
-                                val cleanLang = subLang.replace(Regex("""\s*\[CC\]""", RegexOption.IGNORE_CASE), "").trim()
-                                val variantKey = if (isHi) "${cleanLang.lowercase()} [cc]" else cleanLang.lowercase()
-                                if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(subUrl)) {
-                                    send(StreamEmission.SubtitleFound(SubtitleTrack(url = subUrl, language = subLang)))
+                            if (isLive) {
+                                val (audioBadge, manifestSubs) = inspectLulManifest(streamUrl)
+                                val badge = if (audioBadge.isNotBlank()) {
+                                    "Aether Lula ($audioBadge Auto/1080p HLS)"
+                                } else {
+                                    "Aether Lula (Auto/1080p HLS)"
+                                }
+                                val relType = if (audioBadge.isNotBlank()) AudioReleaseType.DUAL_AUDIO else AudioReleaseType.ORIGINAL
+                                val src = StreamSource(
+                                    url = streamUrl,
+                                    serverName = "Lula (Auto)",
+                                    resolutionLabel = "Auto",
+                                    quality = badge,
+                                    isM3u8 = true,
+                                    releaseType = relType,
+                                    headers = lulHeaders
+                                )
+                                val lulKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                                if (emittedStreamKeys.add(lulKey)) send(StreamEmission.SourceFound(src))
+
+                                // Extract individual variants from Lula master playlist
+                                val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Lula", lulHeaders)
+                                variants.forEach { v ->
+                                    val vSrc = v.copy(serverName = "Lula (${v.resolutionLabel})")
+                                    val vKey = "${vSrc.serverName}:${vSrc.resolutionLabel}:${vSrc.url}"
+                                    if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(vSrc))
+                                }
+
+                                for ((subUrl, subLang) in manifestSubs) {
+                                    val isHi = subLang.contains("[CC]", ignoreCase = true)
+                                    val cleanLang = subLang.replace(Regex("""\s*\[CC\]""", RegexOption.IGNORE_CASE), "").trim()
+                                    val variantKey = if (isHi) "${cleanLang.lowercase()} [cc]" else cleanLang.lowercase()
+                                    if (emittedSubLangs.add(variantKey) && emittedSubUrls.add(subUrl)) {
+                                        send(StreamEmission.SubtitleFound(SubtitleTrack(url = subUrl, language = subLang)))
+                                    }
                                 }
                             }
                         }
@@ -672,7 +724,7 @@ class AetherPlugin(
             } catch (_: Exception) {}
         }
 
-        // 5. Link Multi-Quality Engine
+        // 6. Link Multi-Quality Engine
         launch {
             try {
                 val linkUrl = if (isTv && season != null && episode != null) {
@@ -687,29 +739,36 @@ class AetherPlugin(
                         val root = json.parseToJsonElement(body).jsonObject
                         val streamUrl = root["stream"]?.jsonPrimitive?.contentOrNull
                             ?: root["stream_url"]?.jsonPrimitive?.contentOrNull
-                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http")) {
+                        if (!streamUrl.isNullOrBlank() && streamUrl.startsWith("http") && !streamUrl.contains("totallyacdn.org", ignoreCase = true)) {
                             val linkHeaders = mapOf(
                                 "Referer" to "https://link.aether.cx/",
                                 "Origin" to "https://link.aether.cx",
                                 "User-Agent" to defaultHeaders["User-Agent"]!!
                             )
-                            val src = StreamSource(
-                                url = streamUrl,
-                                serverName = "Link (Auto)",
-                                resolutionLabel = "Auto",
-                                quality = "Aether Link (Auto HLS)",
-                                isM3u8 = true,
-                                releaseType = AudioReleaseType.ORIGINAL,
-                                headers = linkHeaders
-                            )
-                            val linkKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
-                            if (emittedStreamKeys.add(linkKey)) send(StreamEmission.SourceFound(src))
 
-                            val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Link", linkHeaders)
-                            variants.forEach { v ->
-                                val vSrc = v.copy(serverName = "Link (${v.resolutionLabel})")
-                                val vKey = "${vSrc.serverName}:${vSrc.resolutionLabel}:${vSrc.url}"
-                                if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(vSrc))
+                            val isLive = withTimeoutOrNull(3000L) {
+                                isStreamReachable(streamUrl, linkHeaders)
+                            } ?: false
+
+                            if (isLive) {
+                                val src = StreamSource(
+                                    url = streamUrl,
+                                    serverName = "Link (Auto)",
+                                    resolutionLabel = "Auto",
+                                    quality = "Aether Link (Auto HLS)",
+                                    isM3u8 = true,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = linkHeaders
+                                )
+                                val linkKey = "${src.serverName}:${src.resolutionLabel}:${src.url}"
+                                if (emittedStreamKeys.add(linkKey)) send(StreamEmission.SourceFound(src))
+
+                                val variants = resolveMasterPlaylistVariants(streamUrl, "Aether Link", linkHeaders)
+                                variants.forEach { v ->
+                                    val vSrc = v.copy(serverName = "Link (${v.resolutionLabel})")
+                                    val vKey = "${vSrc.serverName}:${vSrc.resolutionLabel}:${vSrc.url}"
+                                    if (emittedStreamKeys.add(vKey)) send(StreamEmission.SourceFound(vSrc))
+                                }
                             }
                         }
                     }
@@ -737,7 +796,18 @@ class AetherPlugin(
             if (isCc) "$base [cc]" else base
         }
         val distinctStreams = streamSources.distinctBy { "${it.serverName}:${it.resolutionLabel}:${it.url}" }
-        StreamResult(streams = distinctStreams, subtitles = sortedSubs)
+        val sortedStreams = distinctStreams.sortedWith(
+            compareBy<StreamSource> {
+                when {
+                    it.resolutionLabel.contains("1080") -> 0
+                    it.resolutionLabel.contains("720") -> 1
+                    it.resolutionLabel.contains("480") -> 2
+                    it.resolutionLabel.contains("Auto", ignoreCase = true) -> 3
+                    else -> 4
+                }
+            }.thenBy { it.serverName }
+        )
+        StreamResult(streams = sortedStreams, subtitles = sortedSubs)
     }
 
     private fun inspectLulManifest(manifestUrl: String): Pair<String, List<Pair<String, String>>> {
@@ -786,6 +856,8 @@ class AetherPlugin(
             "/content/movie/$tmdbId"
         }
 
+        var streamUrl: String? = null
+
         // 1. Direct Aphrodite CDN GET with fast non-blocking timeout
         try {
             val req = Request.Builder()
@@ -800,32 +872,55 @@ class AetherPlugin(
                     val body = resp.body?.string()
                     if (!body.isNullOrBlank()) {
                         val root = json.parseToJsonElement(body).jsonObject
-                        val streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
-                            ?: root["hls"]?.jsonPrimitive?.contentOrNull
-                        if (streamUrl != null && streamUrl.startsWith("http") && !isHoneypotStream(streamUrl)) {
-                            val aphroditeDirectHeaders = mapOf(
-                                "Referer" to "https://atlantic.st/",
-                                "Origin" to "https://atlantic.st",
-                                "User-Agent" to defaultHeaders["User-Agent"]!!
-                            )
-                            results.add(
-                                StreamSource(
-                                    url = streamUrl,
-                                    serverName = "Aphrodite (Direct 1080p)",
-                                    resolutionLabel = "1080p FHD",
-                                    quality = "Aether Aphrodite CDN (1080p FHD HLS)",
-                                    isM3u8 = true,
-                                    releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = aphroditeDirectHeaders
-                                )
-                            )
+                        if (root["found"]?.jsonPrimitive?.booleanOrNull != false) {
+                            streamUrl = root["url"]?.jsonPrimitive?.contentOrNull
+                                ?: root["hls"]?.jsonPrimitive?.contentOrNull
                         }
                     }
                 }
             }
         } catch (_: Throwable) {}
 
-        // 2. High-Speed Multi-Quality Aphrodite Mirrors (1080p FHD, 720p HD, 480p SD, Auto)
+        val resolvedUrl = streamUrl?.takeIf { it.startsWith("http") && !it.contains("totallyacdn.org", ignoreCase = true) }
+        val isHoneypot = resolvedUrl == null || isHoneypotStream(resolvedUrl)
+
+        if (resolvedUrl != null && !isHoneypot) {
+            val aphroditeDirectHeaders = mapOf(
+                "Referer" to "https://atlantic.st/",
+                "Origin" to "https://atlantic.st",
+                "User-Agent" to defaultHeaders["User-Agent"]!!
+            )
+            val isLive = withTimeoutOrNull(3000L) {
+                isStreamReachable(resolvedUrl, aphroditeDirectHeaders)
+            } ?: false
+
+            if (isLive) {
+                results.add(
+                    StreamSource(
+                        url = resolvedUrl,
+                        serverName = "Aphrodite (1080p)",
+                        resolutionLabel = "1080p FHD",
+                        quality = "Aether Aphrodite (1080p FHD HLS)",
+                        isM3u8 = true,
+                        releaseType = AudioReleaseType.ORIGINAL,
+                        headers = aphroditeDirectHeaders
+                    )
+                )
+
+                try {
+                    val variants = resolveMasterPlaylistVariants(resolvedUrl, "Aether Aphrodite", aphroditeDirectHeaders)
+                    variants.forEach { v ->
+                        if (!results.any { it.url == v.url }) {
+                            results.add(v)
+                        }
+                    }
+                } catch (_: Throwable) {}
+
+                return@withContext results
+            }
+        }
+
+        // 2. High-Speed Multi-Quality Aphrodite Mirrors (Fallback when direct returns honeypot or is blocked)
         try {
             val heliosUrl = if (isTv && season != null && episode != null) {
                 "https://stream.hls.lol/helios?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
@@ -835,77 +930,82 @@ class AetherPlugin(
 
             val req = newRequestBuilder(heliosUrl).build()
             client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: ""
-                    val root = json.parseToJsonElement(body).jsonObject
-                    val sources = root["sources"]?.jsonObject
-                    if (sources != null) {
-                        val masterEntry = sources["Moscow"]?.jsonObject ?: sources.values.firstOrNull()?.jsonObject
-                        val encUrl = masterEntry?.get("url")?.jsonPrimitive?.contentOrNull
-                        if (encUrl != null) {
-                            val masterDecrypted = decryptHeliosUrl(encUrl)
-                            if (masterDecrypted != null && masterDecrypted.startsWith("http")) {
-                                val qParam = masterDecrypted.substringAfter("?q=", "").substringBefore("&")
-                                if (qParam.isNotBlank()) {
-                                    val decodedBytes = try {
-                                        java.util.Base64.getUrlDecoder().decode(qParam)
-                                    } catch (_: Exception) {
-                                        val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
-                                        java.util.Base64.getDecoder().decode(padded)
-                                    }
-                                    val qRoot = json.parseToJsonElement(String(decodedBytes, Charsets.UTF_8)).jsonObject
-                                    val customHeadersObj = qRoot["h"]?.jsonObject
-                                    val streamHeaders = mutableMapOf<String, String>()
-                                    customHeadersObj?.forEach { (k, v) ->
-                                        v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
-                                    }
-                                    val aphroditeHeaders = mapOf(
-                                        "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
-                                        "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
-                                        "User-Agent" to defaultHeaders["User-Agent"]!!,
-                                        "Accept-Ranges" to "bytes"
-                                    )
-
-                                    val variantsArr = qRoot["v"]?.jsonArray
-                                    if (variantsArr != null) {
-                                        for (vElem in variantsArr) {
-                                            val vObj = vElem.jsonObject
-                                            val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
-                                            val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
-                                            val qualityLabel = when {
-                                                vQuality.contains("1080") -> "1080p FHD"
-                                                vQuality.contains("720") -> "720p HD"
-                                                vQuality.contains("480") -> "480p SD"
-                                                else -> vQuality
-                                            }
-                                            val aphVariantUrl = if (vUrl.contains("?")) "$vUrl&server=aphrodite" else "$vUrl?server=aphrodite"
-                                            results.add(
-                                                StreamSource(
-                                                    url = aphVariantUrl,
-                                                    serverName = "Aphrodite ($qualityLabel)",
-                                                    resolutionLabel = qualityLabel,
-                                                    quality = "Aether Aphrodite ($qualityLabel HLS)",
-                                                    isM3u8 = true,
-                                                    releaseType = AudioReleaseType.ORIGINAL,
-                                                    headers = aphroditeHeaders
-                                                )
-                                            )
-                                        }
-                                    }
-
-                                    val aphMasterUrl = if (masterDecrypted.contains("?")) "$masterDecrypted&server=aphrodite" else "$masterDecrypted?server=aphrodite"
-                                    results.add(
-                                        StreamSource(
-                                            url = aphMasterUrl,
-                                            serverName = "Aphrodite (Auto)",
-                                            resolutionLabel = "Auto",
-                                            quality = "Aether Aphrodite (Auto HLS)",
-                                            isM3u8 = true,
-                                            releaseType = AudioReleaseType.ORIGINAL,
-                                            headers = aphroditeHeaders
-                                        )
-                                    )
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val root = json.parseToJsonElement(body).jsonObject
+                val sources = root["sources"]?.jsonObject
+                if (sources != null) {
+                    val masterEntry = sources["Moscow"]?.jsonObject ?: sources.values.firstOrNull()?.jsonObject
+                    val encUrl = masterEntry?.get("url")?.jsonPrimitive?.contentOrNull
+                    if (encUrl != null) {
+                        val masterDecrypted = decryptHeliosUrl(encUrl)
+                        if (masterDecrypted != null && masterDecrypted.startsWith("http") && !masterDecrypted.contains("totallyacdn.org", ignoreCase = true)) {
+                            val qParam = masterDecrypted.substringAfter("?q=", "").substringBefore("&")
+                            if (qParam.isNotBlank()) {
+                                val decodedBytes = try {
+                                    java.util.Base64.getUrlDecoder().decode(qParam)
+                                } catch (_: Exception) {
+                                    val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                                    java.util.Base64.getDecoder().decode(padded)
                                 }
+                                val qRoot = json.parseToJsonElement(String(decodedBytes, Charsets.UTF_8)).jsonObject
+                                val customHeadersObj = qRoot["h"]?.jsonObject
+                                val streamHeaders = mutableMapOf<String, String>()
+                                customHeadersObj?.forEach { (k, v) ->
+                                    v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                                }
+                                val aphroditeHeaders = mapOf(
+                                    "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                                    "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                                    "User-Agent" to defaultHeaders["User-Agent"]!!,
+                                    "Accept-Ranges" to "bytes"
+                                )
+
+                                val variantsArr = qRoot["v"]?.jsonArray
+                                if (variantsArr != null) {
+                                    for (vElem in variantsArr) {
+                                        val vObj = vElem.jsonObject
+                                        val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                        if (vUrl.contains("totallyacdn.org", ignoreCase = true)) continue
+                                        val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                        val qualityLabel = when {
+                                            vQuality.contains("1080") -> "1080p FHD"
+                                            vQuality.contains("720") -> "720p HD"
+                                            vQuality.contains("480") -> "480p SD"
+                                            else -> vQuality
+                                        }
+                                        val aphVariantUrl = if (vUrl.contains("?")) "$vUrl&server=aphrodite" else "$vUrl?server=aphrodite"
+                                        results.add(
+                                            StreamSource(
+                                                url = aphVariantUrl,
+                                                serverName = "Aphrodite ($qualityLabel)",
+                                                resolutionLabel = qualityLabel,
+                                                quality = "Aether Aphrodite ($qualityLabel HLS)",
+                                                isM3u8 = true,
+                                                releaseType = AudioReleaseType.ORIGINAL,
+                                                headers = aphroditeHeaders
+                                            )
+                                        )
+                                    }
+                                }
+
+                                val aphMasterUrl = if (masterDecrypted.contains("?")) "$masterDecrypted&server=aphrodite" else "$masterDecrypted?server=aphrodite"
+                                val aphMasterHeaders = mapOf(
+                                    "Referer" to "https://stream.hls.lol/",
+                                    "Origin" to "https://stream.hls.lol",
+                                    "User-Agent" to defaultHeaders["User-Agent"]!!
+                                )
+                                results.add(
+                                    StreamSource(
+                                        url = aphMasterUrl,
+                                        serverName = "Aphrodite (Auto)",
+                                        resolutionLabel = "Auto",
+                                        quality = "Aether Aphrodite (Auto HLS)",
+                                        isM3u8 = true,
+                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        headers = aphMasterHeaders
+                                    )
+                                )
                             }
                         }
                     }
@@ -916,7 +1016,102 @@ class AetherPlugin(
         results
     }
 
+    private suspend fun fetchMoscowStreams(
+        tmdbId: String,
+        isTv: Boolean,
+        season: Int?,
+        episode: Int?
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<StreamSource>()
+        try {
+            val moscowUrl = if (isTv && season != null && episode != null) {
+                "https://stream.hls.lol/moscow?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
+            } else {
+                "https://stream.hls.lol/moscow?tmdbId=$tmdbId&type=movie"
+            }
+            val req = newRequestBuilder(moscowUrl).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val root = json.parseToJsonElement(body).jsonObject
+                val sources = root["sources"]?.jsonObject ?: return@withContext emptyList()
+                for ((_, serverVal) in sources) {
+                    val sObj = serverVal.jsonObject
+                    val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                    val decryptedUrl = decryptMoscowUrl(encUrl) ?: continue
+                    if (!decryptedUrl.startsWith("http")) continue
+                    if (decryptedUrl.contains("totallyacdn.org", ignoreCase = true)) continue
+
+                    val isLive = withTimeoutOrNull(3000L) {
+                        isStreamReachable(decryptedUrl, defaultHeaders)
+                    } ?: false
+
+                    if (isLive) {
+                        val moscowSource = StreamSource(
+                            url = decryptedUrl,
+                            serverName = "Moscow (1080p)",
+                            resolutionLabel = "1080p FHD",
+                            quality = "Aether Moscow (1080p FHD HLS)",
+                            isM3u8 = true,
+                            releaseType = AudioReleaseType.ORIGINAL,
+                            headers = defaultHeaders
+                        )
+                        results.add(moscowSource)
+
+                        val variants = resolveMasterPlaylistVariants(decryptedUrl, "Aether Moscow", defaultHeaders)
+                        for (v in variants) {
+                            if (!results.any { it.url == v.url }) {
+                                results.add(v)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        results
+    }
+
+    private fun decryptMoscowUrl(encUrl: String): String? {
+        return try {
+            val rawHex = when {
+                encUrl.startsWith("ms_") -> encUrl.removePrefix("ms_")
+                encUrl.startsWith("http") -> return encUrl
+                else -> encUrl
+            }
+            val rawBytes = hexToBytes(rawHex)
+            if (rawBytes.size < 28) return null
+
+            val iv = rawBytes.copyOfRange(0, 12)
+            val ctAndTag = rawBytes.copyOfRange(12, rawBytes.size)
+
+            val key = hexToBytes(moscowKeyHex)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val keySpec = SecretKeySpec(key, "AES")
+            val gcmSpec = GCMParameterSpec(128, iv)
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+
+            val decryptedBytes = cipher.doFinal(ctAndTag)
+            String(decryptedBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun isStreamReachable(url: String, headers: Map<String, String>): Boolean {
+        if (url.contains("totallyacdn.org", ignoreCase = true)) return false
+        return try {
+            val req = Request.Builder().url(url)
+            headers.forEach { (k, v) -> req.header(k, v) }
+            client.newCall(req.build()).execute().use { resp ->
+                resp.isSuccessful
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private fun isHoneypotStream(masterUrl: String): Boolean {
+        if (masterUrl.contains("totallyacdn.org", ignoreCase = true)) return true
         return try {
             val req = Request.Builder()
                 .url(masterUrl)
@@ -948,7 +1143,7 @@ class AetherPlugin(
                 }
             }
         } catch (_: Throwable) {
-            false
+            true
         }
     }
 

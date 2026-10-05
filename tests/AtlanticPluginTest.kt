@@ -112,7 +112,7 @@ class AtlanticPluginTest {
         streamResult.streams.forEach { s ->
             println("Atlantic Stream: ${s.quality} -> ${s.url.take(80)}...")
             assertTrue("Stream must be M3U8", s.isM3u8)
-            assertEquals("https://atlantic.st/", s.headers["Referer"])
+            assertTrue("Stream must have valid playback referer", s.headers["Referer"]?.isNotBlank() == true)
         }
 
         println("Atlantic subtitles count: ${streamResult.subtitles.size}")

@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -70,6 +71,9 @@ class AtlanticPlugin(
 
     // Helios AES-256-GCM decryption key (updated live key)
     private val heliosKeyHex = "117c358bcfcaf8fe2cfca57c9d2238a300e1c4de2efb83a5012ba84d8a31f1dd"
+
+    // Moscow AES-256-GCM decryption key (high-speed proxy cluster)
+    private val moscowKeyHex = "55060a042823f51a94c296894a58a0db15f3baef807155140983083fa799ef47"
 
     // Fallback Aphrodite master key (extracted from production bundle)
     private val defaultAphroditeKey = hexToBytes("c12a152cee1630cf8c6f1041c06aa20b7ed6c5e280bce24fc44db23ae3785ddd")
@@ -398,7 +402,7 @@ class AtlanticPlugin(
 
         send(StreamEmission.StatusUpdate("Atlantic", "Connecting to Atlantic CDN & Helios mirrors..."))
 
-        val emittedStreamUrls = ConcurrentHashMap.newKeySet<String>()
+        val emittedStreamKeys = ConcurrentHashMap.newKeySet<String>()
         val emittedSubUrls = ConcurrentHashMap.newKeySet<String>()
         val emittedSubLangs = ConcurrentHashMap.newKeySet<String>()
 
@@ -479,23 +483,39 @@ class AtlanticPlugin(
             } catch (_: Exception) {}
         }
 
-        // 2. Fetch Aphrodite Native Stream (Primary High-Speed CDN at cdn.hls.lol) & Helios Mirrors
+        // 2. Fetch Aphrodite Native Stream (Primary High-Speed CDN at cdn.hls.lol)
         launch {
             try {
                 val aphroditeStreams = fetchAphroditeStreams(tmdbId, isTv, season, episode)
                 aphroditeStreams.forEach { stream ->
-                    if (emittedStreamUrls.add(stream.url)) {
+                    val key = "${stream.serverName}:${stream.resolutionLabel}:${stream.url}"
+                    if (emittedStreamKeys.add(key)) {
                         send(StreamEmission.SourceFound(stream))
                     }
                 }
             } catch (_: Exception) {}
         }
 
+        // 3. Fetch Moscow Native High-Speed Proxy Engine (transcode.cfd proxy cluster)
+        launch {
+            try {
+                val moscowStreams = fetchMoscowStreams(tmdbId, isTv, season, episode)
+                moscowStreams.forEach { stream ->
+                    val key = "${stream.serverName}:${stream.resolutionLabel}:${stream.url}"
+                    if (emittedStreamKeys.add(key)) {
+                        send(StreamEmission.SourceFound(stream))
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        // 4. Fetch Helios Multi-Quality Server Cluster (Direct 1080p, 720p, 480p & Master HLS)
         launch {
             try {
                 val heliosStreams = fetchHeliosStreams(tmdbId, isTv, season, episode)
                 heliosStreams.forEach { stream ->
-                    if (emittedStreamUrls.add(stream.url)) {
+                    val key = "${stream.serverName}:${stream.resolutionLabel}:${stream.url}"
+                    if (emittedStreamKeys.add(key)) {
                         send(StreamEmission.SourceFound(stream))
                     }
                 }
@@ -615,34 +635,40 @@ class AtlanticPlugin(
             } catch (_: Throwable) {}
         }
 
-        val resolvedUrl = streamUrl?.takeIf { it.startsWith("http") }
-        val isHoneypot = resolvedUrl != null && isHoneypotStream(resolvedUrl)
+        val resolvedUrl = streamUrl?.takeIf { it.startsWith("http") && !it.contains("totallyacdn.org", ignoreCase = true) }
+        val isHoneypot = resolvedUrl == null || isHoneypotStream(resolvedUrl)
 
         if (resolvedUrl != null && !isHoneypot) {
-            val results = mutableListOf<StreamSource>()
-            results.add(
-                StreamSource(
-                    url = resolvedUrl,
-                    serverName = "Aphrodite",
-                    resolutionLabel = "Auto",
-                    quality = "Aphrodite (Auto HLS)",
-                    isM3u8 = true,
-                    releaseType = AudioReleaseType.ORIGINAL,
-                    headers = defaultHeaders
+            val isLive = withTimeoutOrNull(3000L) {
+                isStreamReachable(resolvedUrl, defaultHeaders)
+            } ?: false
+
+            if (isLive) {
+                val results = mutableListOf<StreamSource>()
+                results.add(
+                    StreamSource(
+                        url = resolvedUrl,
+                        serverName = "Aphrodite (1080p)",
+                        resolutionLabel = "1080p FHD",
+                        quality = "Atlantic Aphrodite (1080p FHD HLS)",
+                        isM3u8 = true,
+                        releaseType = AudioReleaseType.ORIGINAL,
+                        headers = defaultHeaders
+                    )
                 )
-            )
 
-            // Try inspecting master playlist for additional quality variants (1080p, 720p, 480p)
-            try {
-                val variants = resolveMasterPlaylistVariants(resolvedUrl, "Aphrodite")
-                variants.forEach { v ->
-                    if (!results.any { it.url == v.url }) {
-                        results.add(v)
+                // Try inspecting master playlist for additional quality variants (1080p, 720p, 480p)
+                try {
+                    val variants = resolveMasterPlaylistVariants(resolvedUrl, "Atlantic Aphrodite", defaultHeaders)
+                    variants.forEach { v ->
+                        if (!results.any { it.url == v.url }) {
+                            results.add(v)
+                        }
                     }
-                }
-            } catch (_: Throwable) {}
+                } catch (_: Throwable) {}
 
-            return@withContext results
+                return@withContext results
+            }
         }
 
         // Direct Aphrodite stream was absent or returned the 8-segment Cloudflare VPN honeypot video.
@@ -675,32 +701,91 @@ class AtlanticPlugin(
                 val encUrl = masterEntry?.get("url")?.jsonPrimitive?.contentOrNull ?: return@withContext emptyList()
                 val masterDecrypted = decryptHeliosUrl(encUrl) ?: return@withContext emptyList()
                 if (!masterDecrypted.startsWith("http")) return@withContext emptyList()
+                if (masterDecrypted.contains("totallyacdn.org", ignoreCase = true)) return@withContext emptyList()
+
+                // Extract direct quality variants if ?q= exists
+                val qParam = masterDecrypted.substringAfter("?q=", "").substringBefore("&")
+                if (qParam.isNotBlank()) {
+                    try {
+                        val decodedBytes = try {
+                            java.util.Base64.getUrlDecoder().decode(qParam)
+                        } catch (_: Exception) {
+                            val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                            java.util.Base64.getDecoder().decode(padded)
+                        }
+                        val decodedJsonStr = String(decodedBytes, Charsets.UTF_8)
+                        val qRoot = json.parseToJsonElement(decodedJsonStr).jsonObject
+                        val customHeadersObj = qRoot["h"]?.jsonObject
+                        val streamHeaders = mutableMapOf<String, String>()
+                        customHeadersObj?.forEach { (k, v) ->
+                            v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                        }
+                        val aphHeaders = mapOf(
+                            "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                            "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                            "User-Agent" to defaultHeaders["User-Agent"]!!
+                        )
+
+                        val variantsArr = qRoot["v"]?.jsonArray
+                        if (variantsArr != null) {
+                            for (vElem in variantsArr) {
+                                val vObj = vElem.jsonObject
+                                val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                if (vUrl.contains("totallyacdn.org", ignoreCase = true)) continue
+                                val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                val qualityLabel = when {
+                                    vQuality.contains("1080") -> "1080p FHD"
+                                    vQuality.contains("720") -> "720p HD"
+                                    vQuality.contains("480") -> "480p SD"
+                                    else -> vQuality
+                                }
+                                val aphVariantUrl = if (vUrl.contains("?")) "$vUrl&server=aphrodite" else "$vUrl?server=aphrodite"
+                                results.add(
+                                    StreamSource(
+                                        url = aphVariantUrl,
+                                        serverName = "Aphrodite ($qualityLabel)",
+                                        resolutionLabel = qualityLabel,
+                                        quality = "Atlantic Aphrodite ($qualityLabel HLS)",
+                                        isM3u8 = true,
+                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        headers = aphHeaders
+                                    )
+                                )
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
 
                 val separator = if (masterDecrypted.contains("?")) "&" else "?"
                 val aphroditeMasterUrl = "$masterDecrypted${separator}server=aphrodite"
+                val aphMasterHeaders = mapOf(
+                    "Referer" to "https://stream.hls.lol/",
+                    "Origin" to "https://stream.hls.lol",
+                    "User-Agent" to defaultHeaders["User-Agent"]!!
+                )
 
                 results.add(
                     StreamSource(
                         url = aphroditeMasterUrl,
-                        serverName = "Aphrodite",
+                        serverName = "Aphrodite (Auto)",
                         resolutionLabel = "Auto",
-                        quality = "Aphrodite (Auto HLS)",
+                        quality = "Atlantic Aphrodite (Auto HLS)",
                         isM3u8 = true,
                         releaseType = AudioReleaseType.ORIGINAL,
-                        headers = defaultHeaders
+                        headers = aphMasterHeaders
                     )
                 )
 
                 try {
-                    val variants = resolveMasterPlaylistVariants(masterDecrypted, "Aphrodite")
+                    val variants = resolveMasterPlaylistVariants(masterDecrypted, "Atlantic Aphrodite", aphMasterHeaders)
                     variants.forEach { v ->
                         val vSep = if (v.url.contains("?")) "&" else "?"
                         val vUrl = "${v.url}${vSep}server=aphrodite"
                         results.add(
                             v.copy(
                                 url = vUrl,
-                                serverName = "Aphrodite",
-                                quality = v.quality.replace("Helios", "Aphrodite")
+                                serverName = "Aphrodite (${v.resolutionLabel})",
+                                quality = "Atlantic Aphrodite (${v.resolutionLabel} HLS)"
                             )
                         )
                     }
@@ -710,7 +795,76 @@ class AtlanticPlugin(
         results
     }
 
+    private suspend fun fetchMoscowStreams(
+        tmdbId: String,
+        isTv: Boolean,
+        season: Int?,
+        episode: Int?
+    ): List<StreamSource> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<StreamSource>()
+        try {
+            val moscowUrl = if (isTv && season != null && episode != null) {
+                "https://stream.hls.lol/moscow?tmdbId=$tmdbId&type=tv&seasonId=$season&episodeId=$episode"
+            } else {
+                "https://stream.hls.lol/moscow?tmdbId=$tmdbId&type=movie"
+            }
+            val req = newRequestBuilder(moscowUrl).build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext emptyList()
+                val body = resp.body?.string() ?: return@withContext emptyList()
+                val root = json.parseToJsonElement(body).jsonObject
+                val sources = root["sources"]?.jsonObject ?: return@withContext emptyList()
+                for ((_, serverVal) in sources) {
+                    val sObj = serverVal.jsonObject
+                    val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                    val decryptedUrl = decryptMoscowUrl(encUrl) ?: continue
+                    if (!decryptedUrl.startsWith("http")) continue
+                    if (decryptedUrl.contains("totallyacdn.org", ignoreCase = true)) continue
+
+                    val isLive = withTimeoutOrNull(3000L) {
+                        isStreamReachable(decryptedUrl, defaultHeaders)
+                    } ?: false
+
+                    if (isLive) {
+                        val moscowSource = StreamSource(
+                            url = decryptedUrl,
+                            serverName = "Moscow (1080p)",
+                            resolutionLabel = "1080p FHD",
+                            quality = "Atlantic Moscow (1080p FHD HLS)",
+                            isM3u8 = true,
+                            releaseType = AudioReleaseType.ORIGINAL,
+                            headers = defaultHeaders
+                        )
+                        results.add(moscowSource)
+
+                        val variants = resolveMasterPlaylistVariants(decryptedUrl, "Atlantic Moscow", defaultHeaders)
+                        for (v in variants) {
+                            if (!results.any { it.url == v.url }) {
+                                results.add(v)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        results
+    }
+
+    private fun isStreamReachable(url: String, headers: Map<String, String>): Boolean {
+        if (url.contains("totallyacdn.org", ignoreCase = true)) return false
+        return try {
+            val req = Request.Builder().url(url)
+            headers.forEach { (k, v) -> req.header(k, v) }
+            client.newCall(req.build()).execute().use { resp ->
+                resp.isSuccessful
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private fun isHoneypotStream(masterUrl: String): Boolean {
+        if (masterUrl.contains("totallyacdn.org", ignoreCase = true)) return true
         return try {
             val req = Request.Builder()
                 .url(masterUrl)
@@ -742,7 +896,7 @@ class AtlanticPlugin(
                 }
             }
         } catch (_: Throwable) {
-            false
+            true
         }
     }
 
@@ -1009,57 +1163,121 @@ class AtlanticPlugin(
                 val root = json.parseToJsonElement(body).jsonObject
                 val sources = root["sources"]?.jsonObject ?: return@withContext emptyList()
 
-                coroutineScope {
-                    val serverJobs = sources.map { (serverName, serverVal) ->
-                        async {
-                            val serverStreams = mutableListOf<StreamSource>()
-                            val sObj = serverVal.jsonObject
-                            val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: return@async emptyList<StreamSource>()
-                            val masterUrl = decryptHeliosUrl(encUrl) ?: return@async emptyList<StreamSource>()
-                            if (!masterUrl.startsWith("http")) return@async emptyList<StreamSource>()
+                for ((serverName, serverVal) in sources) {
+                    val sObj = serverVal.jsonObject
+                    val encUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                    val decryptedUrl = decryptHeliosUrl(encUrl) ?: continue
+                    if (!decryptedUrl.startsWith("http")) continue
+                    if (decryptedUrl.contains("totallyacdn.org", ignoreCase = true)) continue
 
-                            val serverBadge = when (serverName.lowercase()) {
-                                "moscow" -> "Helios Moscow"
-                                "novo" -> "Helios Novo"
-                                "omsk" -> "Helios Omsk"
-                                else -> "Helios $serverName"
+                    // 1. Parse individual direct quality variants from "q" query parameter
+                    val qParam = decryptedUrl.substringAfter("?q=", "").substringBefore("&")
+                    if (qParam.isNotBlank()) {
+                        try {
+                            val decodedBytes = try {
+                                java.util.Base64.getUrlDecoder().decode(qParam)
+                            } catch (_: Exception) {
+                                val padded = qParam + "=".repeat((4 - qParam.length % 4) % 4)
+                                java.util.Base64.getDecoder().decode(padded)
                             }
-
-                            // 1. Add Master Auto stream
-                            serverStreams.add(
-                                StreamSource(
-                                    url = masterUrl,
-                                    serverName = serverBadge,
-                                    resolutionLabel = "Auto",
-                                    quality = "$serverBadge (Auto HLS)",
-                                    isM3u8 = true,
-                                    releaseType = AudioReleaseType.ORIGINAL,
-                                    headers = defaultHeaders
-                                )
+                            val decodedJsonStr = String(decodedBytes, Charsets.UTF_8)
+                            val qRoot = json.parseToJsonElement(decodedJsonStr).jsonObject
+                            val customHeadersObj = qRoot["h"]?.jsonObject
+                            val streamHeaders = mutableMapOf<String, String>()
+                            customHeadersObj?.forEach { (k, v) ->
+                                v.jsonPrimitive.contentOrNull?.let { streamHeaders[k] = it }
+                            }
+                            val reqHeaders = mapOf(
+                                "Referer" to (streamHeaders["referer"] ?: "https://www.movy.sx/"),
+                                "Origin" to (streamHeaders["origin"] ?: "https://www.movy.sx"),
+                                "User-Agent" to defaultHeaders["User-Agent"]!!
                             )
 
-                            // 2. Fetch master manifest to resolve quality tiers & audio tracks
-                            try {
-                                val variants = resolveMasterPlaylistVariants(masterUrl, serverBadge)
-                                serverStreams.addAll(variants)
-                            } catch (_: Exception) {}
+                            val variantsArr = qRoot["v"]?.jsonArray
+                            if (variantsArr != null) {
+                                for (vElem in variantsArr) {
+                                    val vObj = vElem.jsonObject
+                                    val vUrl = vObj["u"]?.jsonPrimitive?.contentOrNull ?: continue
+                                    if (vUrl.contains("totallyacdn.org", ignoreCase = true)) continue
+                                    val vQuality = vObj["q"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                    val qualityLabel = when {
+                                        vQuality.contains("1080") -> "1080p FHD"
+                                        vQuality.contains("720") -> "720p HD"
+                                        vQuality.contains("480") -> "480p SD"
+                                        else -> vQuality
+                                    }
 
-                            serverStreams
-                        }
+                                    val isLive = withTimeoutOrNull(3000L) {
+                                        isStreamReachable(vUrl, reqHeaders)
+                                    } ?: false
+
+                                    if (isLive) {
+                                        results.add(
+                                            StreamSource(
+                                                url = vUrl,
+                                                serverName = "Helios ($qualityLabel)",
+                                                resolutionLabel = qualityLabel,
+                                                quality = "Atlantic Helios ($qualityLabel HLS)",
+                                                isM3u8 = true,
+                                                releaseType = AudioReleaseType.ORIGINAL,
+                                                headers = reqHeaders
+                                            )
+                                        )
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
                     }
-                    val allLists = serverJobs.awaitAll()
-                    allLists.forEach { results.addAll(it) }
+
+                    // 2. Also emit Master stream
+                    val heliosMasterHeaders = mapOf(
+                        "Referer" to "https://stream.hls.lol/",
+                        "Origin" to "https://stream.hls.lol",
+                        "User-Agent" to defaultHeaders["User-Agent"]!!
+                    )
+                    val isMasterLive = withTimeoutOrNull(3000L) {
+                        isStreamReachable(decryptedUrl, heliosMasterHeaders)
+                    } ?: false
+
+                    if (isMasterLive) {
+                        results.add(
+                            StreamSource(
+                                url = decryptedUrl,
+                                serverName = "Helios ($serverName Auto)",
+                                resolutionLabel = "Auto",
+                                quality = "Atlantic Helios ($serverName Auto HLS)",
+                                isM3u8 = true,
+                                releaseType = AudioReleaseType.ORIGINAL,
+                                headers = heliosMasterHeaders
+                            )
+                        )
+
+                        // 3. Resolve master playlist variants if any
+                        try {
+                            val variants = resolveMasterPlaylistVariants(decryptedUrl, "Atlantic Helios $serverName", heliosMasterHeaders)
+                            for (v in variants) {
+                                if (!results.any { it.url == v.url }) {
+                                    results.add(v)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         } catch (_: Exception) {}
         results
     }
 
-    private fun resolveMasterPlaylistVariants(masterUrl: String, serverPrefix: String): List<StreamSource> {
+    private fun resolveMasterPlaylistVariants(
+        masterUrl: String,
+        serverPrefix: String,
+        customHeaders: Map<String, String> = defaultHeaders
+    ): List<StreamSource> {
         val variants = mutableListOf<StreamSource>()
         try {
-            val req = newRequestBuilder(masterUrl).build()
-            client.newCall(req).execute().use { resp ->
+            val req = Request.Builder().url(masterUrl)
+            customHeaders.forEach { (k, v) -> req.header(k, v) }
+            client.newCall(req.build()).execute().use { resp ->
                 if (!resp.isSuccessful) return emptyList()
                 val playlistText = resp.body?.string() ?: return emptyList()
                 if (!playlistText.contains("#EXTM3U") || !playlistText.contains("#EXT-X-STREAM-INF")) {
@@ -1115,13 +1333,13 @@ class AtlanticPlugin(
                                     variants.add(
                                         StreamSource(
                                             url = resolvedUrl,
-                                            serverName = serverPrefix,
+                                            serverName = "$serverPrefix ($qLabel)",
                                             resolutionLabel = qLabel,
                                             quality = "$serverPrefix ($qLabel)$audioBadge",
                                             isM3u8 = true,
                                             releaseType = releaseType,
                                             audioTracks = audioDescs,
-                                            headers = defaultHeaders
+                                            headers = customHeaders
                                         )
                                     )
                                 }
@@ -1150,6 +1368,32 @@ class AtlanticPlugin(
             val ctAndTag = rawBytes.copyOfRange(12, rawBytes.size)
 
             val key = hexToBytes(heliosKeyHex)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val keySpec = SecretKeySpec(key, "AES")
+            val gcmSpec = GCMParameterSpec(128, iv)
+            cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec)
+
+            val decryptedBytes = cipher.doFinal(ctAndTag)
+            String(decryptedBytes, Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun decryptMoscowUrl(encUrl: String): String? {
+        return try {
+            val rawHex = when {
+                encUrl.startsWith("ms_") -> encUrl.removePrefix("ms_")
+                encUrl.startsWith("http") -> return encUrl
+                else -> encUrl
+            }
+            val rawBytes = hexToBytes(rawHex)
+            if (rawBytes.size < 28) return null
+
+            val iv = rawBytes.copyOfRange(0, 12)
+            val ctAndTag = rawBytes.copyOfRange(12, rawBytes.size)
+
+            val key = hexToBytes(moscowKeyHex)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             val keySpec = SecretKeySpec(key, "AES")
             val gcmSpec = GCMParameterSpec(128, iv)
