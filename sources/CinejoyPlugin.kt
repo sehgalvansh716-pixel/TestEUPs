@@ -552,7 +552,7 @@ class CinejoyPlugin(
         // 3. Cinejoy Native Lisbon Engine (HTTP/1.1 CDN Verified & Virtual eup:// URL)
         launch {
             try {
-                val lisbonJson = withTimeoutOrNull(8000L) {
+                val lisbonJson = withTimeoutOrNull(15000L) {
                     CinejoyWasmEngine.requestStream(
                         client = http.cdn,
                         server = "Lisbon",
@@ -598,16 +598,16 @@ class CinejoyPlugin(
                             )
 
                             // Pre-flight check via isolated cdn HTTP/1.1 OkHttp client
-                            val isLive = withTimeoutOrNull(2500L) {
+                            val isLive = withTimeoutOrNull(5000L) {
                                 isStreamReachable(rawUrl, defaultHeaders)
                             } ?: true // If probe times out, emit optimistically
 
                             if (isLive) {
                                 val lisbonSource = CoreStreamSource(
                                     url = rawUrl,
-                                    serverName = "Lisbon (1080p)",
-                                    resolutionLabel = "1080p FHD",
-                                    quality = "Cinejoy Lisbon (1080p FHD HLS)",
+                                    serverName = "Lisbon (Auto)",
+                                    resolutionLabel = "Auto",
+                                    quality = "Cinejoy Lisbon (Auto HLS)",
                                     isM3u8 = true,
                                     releaseType = AudioReleaseType.ORIGINAL,
                                     headers = defaultHeaders
@@ -615,6 +615,15 @@ class CinejoyPlugin(
                                 val lisbonKey = "${lisbonSource.serverName}:${lisbonSource.url}"
                                 if (emittedStreamKeys.add(lisbonKey)) {
                                     send(StreamEmission.SourceFound(lisbonSource))
+                                }
+
+                                // Resolve child variants for Lisbon
+                                val variants = resolveMasterPlaylistVariants(rawUrl, "Lisbon", defaultHeaders)
+                                for (v in variants) {
+                                    val vKey = "${v.serverName}:${v.url}"
+                                    if (emittedStreamKeys.add(vKey)) {
+                                        send(StreamEmission.SourceFound(v))
+                                    }
                                 }
                             }
                         }
@@ -626,7 +635,7 @@ class CinejoyPlugin(
         // 4. Cinejoy Native Nebula Engine (1080p Master & Adaptive Variants via Wasm)
         launch {
             try {
-                val nebulaJson = withTimeoutOrNull(8000L) {
+                val nebulaJson = withTimeoutOrNull(15000L) {
                     CinejoyWasmEngine.requestStream(
                         client = http.cdn,
                         server = "Nebula",
@@ -644,6 +653,30 @@ class CinejoyPlugin(
                             val sObj = streamElem.jsonObject
                             val playlistUrl = sObj["playlist"]?.jsonPrimitive?.contentOrNull ?: continue
                             if (!playlistUrl.startsWith("http")) continue
+
+                            val sourceId = "cinejoy:nebula:$tmdbId:${season ?: 0}:${episode ?: 0}"
+                            val eupSource = EupStreamSource(
+                                id = sourceId,
+                                serverId = "nebula",
+                                serverLabel = "Nebula (Auto)",
+                                url = playlistUrl,
+                                kind = StreamKind.HLS,
+                                headers = HeaderPolicy(sticky = defaultHeaders),
+                                video = VideoInfo(height = 1080),
+                                expiresAtEpochMs = System.currentTimeMillis() + (15 * 60_000L),
+                                refreshHandle = "v1|1|nebula"
+                            )
+                            sourceEntries[sourceId] = CachedSourceEntry(
+                                tmdbId = tmdbId,
+                                isTv = isTv,
+                                season = season,
+                                episode = episode,
+                                serverId = "Nebula",
+                                gen = 1,
+                                realUrl = playlistUrl,
+                                realSource = eupSource,
+                                expiresAtMs = System.currentTimeMillis() + (15 * 60_000L)
+                            )
 
                             val nebulaMaster = CoreStreamSource(
                                 url = playlistUrl,
