@@ -2,9 +2,12 @@ package com.euthopiar.core.provider
 
 import com.euthopiar.core.dsl.*
 import com.euthopiar.core.extractor.ExtractorRegistry
+import com.euthopiar.core.matcher.MatchScorer
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
 import com.euthopiar.core.util.TmdbBridge
+import com.euthopiar.eup.api.ContentType
+import com.euthopiar.eup.api.MatchHints
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -254,7 +257,30 @@ class OneShowsPlugin(
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val isTv = mediaItem.type == MediaType.TV_SERIES
         val typeStr = if (isTv) "tv" else "movie"
-        val tmdbId = mediaItem.id
+        var tmdbId = mediaItem.id
+
+        if (tmdbId.toIntOrNull() == null) {
+            try {
+                val results = search(mediaItem.title)
+                val hints = MatchHints(
+                    tmdbId = 0,
+                    imdbId = null,
+                    type = if (isTv) ContentType.TV_SERIES else ContentType.MOVIE,
+                    titles = setOfNotNull(mediaItem.title).filter { it.isNotBlank() }.toSet(),
+                    year = mediaItem.year,
+                    runtimeMin = null
+                )
+                val best = results
+                    .map { it to MatchScorer.score(hints, it) }
+                    .filter { it.second >= MatchScorer.THRESHOLD_VERIFY }
+                    .maxByOrNull { it.second }?.first
+                    ?: results.firstOrNull()
+
+                if (best != null && best.id.toIntOrNull() != null) {
+                    tmdbId = best.id
+                }
+            } catch (_: Exception) {}
+        }
 
         var siteTitle: String? = null
         var siteSynopsis: String? = null
@@ -1139,7 +1165,7 @@ class OneShowsPlugin(
             val base = it.language.replace(Regex("""\s*\[CC\]""", RegexOption.IGNORE_CASE), "").trim().lowercase()
             if (isCc) "$base [cc]" else base
         }
-        StreamResult(streams = streamSources, subtitles = sortedSubs)
+        StreamResult(streams = streamSources.distinctBy { it.url }, subtitles = sortedSubs)
     }
 
     override suspend fun getDownloadLinks(episodeData: String): List<DownloadOption> = withContext(Dispatchers.IO) {
@@ -1312,7 +1338,7 @@ class OneShowsPlugin(
         val combined = mutableListOf<DownloadOption>()
         combined.addAll(directCdnOptions)
         combined.addAll(vidzeeOptions)
-        combined
+        combined.filter { it.url.startsWith("http") }.distinctBy { it.url }
     }
 
     private data class VidzeeStream(
