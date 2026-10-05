@@ -1153,7 +1153,7 @@ class CinejoyPlugin(
         val tmdbId = mediaItem.id
         val isTv = mediaItem.type == MediaType.TV_SERIES
         val endpoint = if (isTv) "tv" else "movie"
-        val url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits"
+        val url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar"
         val req = Request.Builder().url(url).build()
 
         var title = mediaItem.title
@@ -1161,8 +1161,12 @@ class CinejoyPlugin(
         var posterUrl = mediaItem.posterUrl
         var backdropUrl = mediaItem.backdropUrl
         var year: Int? = null
+        var genres = emptyList<String>()
+        var rating: String? = null
+        var duration: String? = null
         val castMembers = mutableListOf<CastMember>()
         val allEpisodes = mutableListOf<EpisodeItem>()
+        val recsList = mutableListOf<MediaItem>()
 
         try {
             http.meta.newCall(req).execute().use { resp ->
@@ -1179,6 +1183,16 @@ class CinejoyPlugin(
                         ?: obj["first_air_date"]?.jsonPrimitive?.contentOrNull)
                         ?.take(4)?.toIntOrNull()
 
+                    genres = obj["genres"]?.jsonArray?.mapNotNull {
+                        it.jsonObject["name"]?.jsonPrimitive?.contentOrNull
+                    }.orEmpty()
+
+                    rating = obj["vote_average"]?.jsonPrimitive?.doubleOrNull?.let { "%.1f".format(it) }
+
+                    val runtimeMin = obj["runtime"]?.jsonPrimitive?.intOrNull
+                        ?: obj["episode_run_time"]?.jsonArray?.firstOrNull()?.jsonPrimitive?.intOrNull
+                    duration = runtimeMin?.let { "$it min" }
+
                     val castArr = obj["credits"]?.jsonObject?.get("cast")?.jsonArray
                     castArr?.take(15)?.forEach { cElem ->
                         val cObj = cElem.jsonObject
@@ -1189,6 +1203,46 @@ class CinejoyPlugin(
                             "https://image.tmdb.org/t/p/w185$it"
                         }
                         castMembers.add(CastMember(id = cId, name = cName, character = cRole, profileUrl = cPhoto))
+                    }
+
+                    // Extract Recommendations & Similar (More Like This)
+                    val rawRecs = mutableListOf<JsonObject>()
+                    obj["recommendations"]?.jsonObject?.get("results")?.jsonArray?.forEach {
+                        (it as? JsonObject)?.let { recObj -> rawRecs.add(recObj) }
+                    }
+                    obj["similar"]?.jsonObject?.get("results")?.jsonArray?.forEach {
+                        (it as? JsonObject)?.let { simObj -> rawRecs.add(simObj) }
+                    }
+
+                    for (rObj in rawRecs.distinctBy { it["id"]?.jsonPrimitive?.contentOrNull }) {
+                        val rId = rObj["id"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val rTitle = rObj["title"]?.jsonPrimitive?.contentOrNull
+                            ?: rObj["name"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val rMediaType = rObj["media_type"]?.jsonPrimitive?.contentOrNull ?: endpoint
+                        val rIsTv = rMediaType == "tv"
+                        val rPoster = rObj["poster_path"]?.jsonPrimitive?.contentOrNull?.let {
+                            "https://image.tmdb.org/t/p/w500$it"
+                        }
+                        val rBackdrop = rObj["backdrop_path"]?.jsonPrimitive?.contentOrNull?.let {
+                            "https://image.tmdb.org/t/p/w1280$it"
+                        }
+                        val rYear = (rObj["release_date"]?.jsonPrimitive?.contentOrNull
+                            ?: rObj["first_air_date"]?.jsonPrimitive?.contentOrNull)?.take(4)?.toIntOrNull()
+                        val rRating = rObj["vote_average"]?.jsonPrimitive?.doubleOrNull?.let { "%.1f".format(it) }
+
+                        recsList.add(
+                            MediaItem(
+                                id = rId,
+                                title = rTitle,
+                                url = "https://cinejoy.pk/${if (rIsTv) "tv" else "movie"}/$rId",
+                                posterUrl = rPoster,
+                                backdropUrl = rBackdrop,
+                                type = if (rIsTv) MediaType.TV_SERIES else MediaType.MOVIE,
+                                year = rYear,
+                                rating = rRating,
+                                provider = name
+                            )
+                        )
                     }
 
                     if (isTv) {
@@ -1250,8 +1304,13 @@ class CinejoyPlugin(
             type = mediaItem.type,
             year = year,
             synopsis = overview,
+            genres = genres,
+            duration = duration,
+            rating = rating,
             cast = castMembers,
-            episodes = allEpisodes
+            episodes = allEpisodes,
+            recommendations = recsList,
+            provider = name
         )
     }
 
@@ -1286,6 +1345,23 @@ class CinejoyPlugin(
             )
         }
 
+        val similarCards = d.recommendations.map { rec ->
+            val isTv = rec.type == MediaType.TV_SERIES
+            MediaCard(
+                id = rec.id,
+                title = rec.title,
+                posterUrl = rec.posterUrl,
+                backdropUrl = rec.backdropUrl,
+                type = if (isTv) ContentType.TV_SERIES else ContentType.MOVIE,
+                releaseYear = rec.year,
+                target = if (isTv) {
+                    PlayableTarget.Episode(tmdbId = rec.id.toInt(), season = 1, episode = 1, title = rec.title)
+                } else {
+                    PlayableTarget.Movie(tmdbId = rec.id.toInt(), title = rec.title, releaseYear = rec.year)
+                }
+            )
+        }
+
         MediaDetails(
             id = d.id,
             title = d.title,
@@ -1294,6 +1370,9 @@ class CinejoyPlugin(
             backdropUrl = d.backdropUrl,
             type = card.type,
             year = d.year,
+            duration = d.duration,
+            rating = d.rating,
+            genres = d.genres,
             cast = d.cast.map { com.euthopiar.eup.api.CastDescriptor(name = it.name, character = it.character, profileUrl = it.profileUrl) },
             seasons = seasonsGrouped,
             defaultTarget = card.target
