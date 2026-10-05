@@ -42,6 +42,7 @@ import com.euthopiar.eup.api.SubtitleDescriptor
 import com.euthopiar.eup.api.VideoInfo
 import com.euthopiar.eup.api.StreamSource as EupStreamSource
 import com.euthopiar.eup.api.AudioTrackDescriptor as EupAudioTrackDescriptor
+import android.util.Log
 
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
@@ -669,7 +670,11 @@ class CinejoyPlugin(
                         }
                     }
                 }
-            } catch (_: Throwable) {}
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w("CinejoyPlugin", "Lisbon engine error: ${t.message}", t)
+            }
         }
 
         // 4. Cinejoy Native Nebula Engine (1080p Master & Adaptive Variants via Wasm)
@@ -764,7 +769,11 @@ class CinejoyPlugin(
                         }
                     }
                 }
-            } catch (_: Throwable) {}
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                Log.w("CinejoyPlugin", "Nebula engine error: ${t.message}", t)
+            }
         }
     }
 
