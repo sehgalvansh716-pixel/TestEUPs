@@ -102,7 +102,7 @@ class CinejoyPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "cinejoy",
         name = "Cinejoy",
-        version = 7,
+        version = 8,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.CinejoyPlugin",

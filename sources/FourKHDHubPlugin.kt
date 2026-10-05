@@ -1,7 +1,5 @@
 package com.euthopiar.core.provider
 
-import android.util.Base64
-import android.util.Log
 import com.euthopiar.core.model.CatalogRow
 import com.euthopiar.core.model.DownloadOption
 import com.euthopiar.core.model.EpisodeItem
@@ -85,7 +83,7 @@ class FourKHDHubPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "4khdhub",
         name = "4KHDHub",
-        version = 5,
+        version = 6,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FourKHDHubPlugin",
@@ -268,8 +266,7 @@ class FourKHDHubPlugin(
             http.scrape.newCall(req).execute().use { r ->
                 if (r.isSuccessful) r.body?.string().orEmpty() else ""
             }
-        } catch (t: Throwable) {
-            Log.w(SiteConfig.TAG, "Search request failed: ${t.message}")
+        } catch (_: Throwable) {
             ""
         }
 
@@ -594,6 +591,14 @@ class FourKHDHubPlugin(
             )
         }
 
+        val trailerUrl = doc.select("iframe[src*='youtube.com/embed'], iframe[src*='youtu.be']").firstOrNull()?.let { iframe ->
+            val src = iframe.absUrl("src")
+            val yId = Regex("""embed/([a-zA-Z0-9_-]+)""").find(src)?.groupValues?.get(1)
+            if (!yId.isNullOrBlank()) "https://www.youtube.com/watch?v=$yId" else null
+        } ?: doc.select("a[href*='youtube.com/watch'], a[href*='youtu.be']").firstOrNull()?.let { a ->
+            a.absUrl("href").ifBlank { null }
+        }
+
         val mediaDetail = MediaDetail(
             id = pageUrl,
             title = title,
@@ -603,7 +608,8 @@ class FourKHDHubPlugin(
             type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
             year = year,
             synopsis = overview,
-            episodes = episodes
+            episodes = episodes,
+            trailerUrl = trailerUrl
         )
 
         return CachedDetail(detail = mediaDetail, dlGroups = dlGroups, fetchedAt = System.currentTimeMillis())
@@ -707,8 +713,7 @@ class FourKHDHubPlugin(
                                         send(StreamEmission.SourceFound(coreSource))
                                     }
                                 }
-                            } catch (t: Throwable) {
-                                Log.w(SiteConfig.TAG, "Variant link error: ${t.message}")
+                            } catch (_: Throwable) {
                             }
                         }
                     }
@@ -835,15 +840,15 @@ class FourKHDHubPlugin(
                 return directMatch
             }
 
-            val payloadMatch = Regex("""s\(\s*['"]o['"]\s*,\s*['"]([^'"]+)['"]\s*,\s*\d+""").find(html)?.groupValues?.get(1)
+            val payloadMatch = Regex("""s\(\s*['"]o['"]\s*,\s*['"]([^'"]+)['"]""").find(html)?.groupValues?.get(1)
             if (payloadMatch != null) {
-                val s1 = String(Base64.decode(payloadMatch, Base64.DEFAULT), Charsets.UTF_8)
-                val s2 = String(Base64.decode(s1, Base64.DEFAULT), Charsets.UTF_8)
+                val s1 = safeDecodeBase64String(payloadMatch)
+                val s2 = safeDecodeBase64String(s1)
                 val s3 = rot13(s2)
-                val s4 = String(Base64.decode(s3, Base64.DEFAULT), Charsets.UTF_8)
+                val s4 = safeDecodeBase64String(s3)
                 val root = json.parseToJsonElement(s4).jsonObject
                 val destB64 = root["o"]?.jsonPrimitive?.contentOrNull ?: return null
-                return String(Base64.decode(destB64, Base64.DEFAULT), Charsets.UTF_8)
+                return safeDecodeBase64String(destB64).ifBlank { null }
             }
             null
         } catch (_: Throwable) { null }
@@ -905,7 +910,7 @@ class FourKHDHubPlugin(
                         val uParam = href.toHttpUrlOrNull()?.queryParameter("u")
                         if (uParam != null) {
                             try {
-                                val rawStream = String(Base64.decode(uParam, Base64.DEFAULT), Charsets.UTF_8)
+                                val rawStream = safeDecodeBase64String(uParam)
                                 if (rawStream.startsWith("http")) {
                                     candidates.add(MirrorCandidate(rawStream, "HBPlay Edge Mirror", MirrorKind.HBPLAY, null))
                                 }
@@ -991,6 +996,27 @@ class FourKHDHubPlugin(
     }
 
     // ───────────────────────────── String & Cryptographic Utilities ─────────────────────────────
+    private fun safeDecodeBase64(input: String): ByteArray {
+        val clean = input.trim().replace("\n", "").replace("\r", "")
+        val padded = when (clean.length % 4) {
+            2 -> "$clean=="
+            3 -> "$clean="
+            else -> clean
+        }
+        return try {
+            java.util.Base64.getDecoder().decode(padded)
+        } catch (_: Throwable) {
+            try {
+                java.util.Base64.getUrlDecoder().decode(padded)
+            } catch (_: Throwable) {
+                ByteArray(0)
+            }
+        }
+    }
+
+    private fun safeDecodeBase64String(input: String): String =
+        try { String(safeDecodeBase64(input), Charsets.UTF_8) } catch (_: Throwable) { "" }
+
     private fun rot13(s: String): String {
         val sb = StringBuilder(s.length)
         for (c in s) {
