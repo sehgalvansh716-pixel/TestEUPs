@@ -7,12 +7,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.CookieJar
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.InetAddress
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -24,26 +27,61 @@ import java.util.regex.Pattern
  * Utilizes the official EPorner JSON API and high-speed MP4 video CDNs to deliver
  * pristine 4K / 1080p / 720p full-length adult video scenes.
  *
- * Backed by automatic DNS-over-HTTPS (DoH) via [DohDns] to avoid ISP DNS blocking.
+ * Backed by automatic DNS-over-HTTPS (DoH) via [DohDns] with intelligent ISP unblock
+ * route prioritization.
  */
 class EpornerPlugin(
     customClient: OkHttpClient? = null
 ) : UniversalPlugin {
 
-    private val client: OkHttpClient = (customClient ?: DohDns.createOkHttpClient(
-        connectTimeoutSeconds = 15,
-        readTimeoutSeconds = 20
-    )).newBuilder().cookieJar(object : CookieJar {
-        private val cookieStore = ConcurrentHashMap<String, String>()
-        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            cookies.forEach { cookieStore[it.name] = it.value }
-        }
-        override fun loadForRequest(url: HttpUrl): List<Cookie> {
-            return cookieStore.map { (name, value) ->
-                Cookie.Builder().name(name).value(value).domain(url.host).build()
+    private val smartDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            val isWebHost = hostname.equals("www.eporner.com", ignoreCase = true) ||
+                            hostname.equals("eporner.com", ignoreCase = true)
+            val addresses = try {
+                DohDns.DEFAULT.lookup(hostname)
+            } catch (_: Throwable) {
+                emptyList()
+            }
+            if (isWebHost) {
+                val cleanIps = listOf("94.75.220.4", "94.75.220.7")
+                val resolvedClean = addresses.filter { it.hostAddress in cleanIps }
+                    .sortedByDescending { if (it.hostAddress == "94.75.220.4") 100 else 90 }
+                val fallbackAddresses = cleanIps.mapNotNull { ip ->
+                    try {
+                        val bytes = ip.split(".").map { it.toInt().toByte() }.toByteArray()
+                        InetAddress.getByAddress(hostname, bytes)
+                    } catch (_: Throwable) { null }
+                }
+                val otherResolved = addresses.filterNot { it.hostAddress in cleanIps }
+                return (resolvedClean + fallbackAddresses + otherResolved).distinctBy { it.hostAddress }
+            }
+            return addresses.ifEmpty {
+                try { Dns.SYSTEM.lookup(hostname) } catch (_: Throwable) { emptyList() }
             }
         }
-    }).build()
+    }
+
+    private val client: OkHttpClient = (customClient ?: DohDns.createOkHttpClient(
+        connectTimeoutSeconds = 15,
+        readTimeoutSeconds = 20,
+        dns = smartDns
+    )).newBuilder()
+        .dns(smartDns)
+        .retryOnConnectionFailure(true)
+        .cookieJar(object : CookieJar {
+            private val cookieStore = ConcurrentHashMap<String, String>()
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                cookies.forEach { cookieStore[it.name] = it.value }
+            }
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                return cookieStore.mapNotNull { (name, value) ->
+                    try {
+                        Cookie.Builder().name(name).value(value).domain(url.host).build()
+                    } catch (_: Throwable) { null }
+                }
+            }
+        }).build()
 
     constructor() : this(null)
 
@@ -60,7 +98,7 @@ class EpornerPlugin(
     override suspend fun getHomeCatalog(): List<CatalogRow> = withContext(Dispatchers.IO) {
         val rows = mutableListOf<CatalogRow>()
 
-        coroutineScope {
+        supervisorScope {
             val topWeeklyDeferred = async { fetchApiVideos(query = "", order = "top-weekly", count = 16) }
             val fourKDeferred = async { fetchApiVideos(query = "4k", order = "top-weekly", count = 16) }
             val desiDeferred = async { fetchApiVideos(query = "desi", order = "top-weekly", count = 16) }
@@ -95,7 +133,7 @@ class EpornerPlugin(
     }
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
-        val videoId = mediaItem.id.removePrefix("video-").substringBefore("/").substringBefore("-")
+        val videoId = mediaItem.id.removePrefix("video-").substringBefore("/")
         val videoPageUrl = when {
             mediaItem.url.startsWith("http") -> mediaItem.url
             mediaItem.url.isNotBlank() -> "$mainUrl/${mediaItem.url.removePrefix("/")}"
@@ -135,27 +173,47 @@ class EpornerPlugin(
                 }
             }
 
-            // Resolve available quality links in parallel
-            val resolvedEpisodes = coroutineScope {
-                dloadPaths.map { path ->
+            // Prioritize standard MP4 over AV1 since standard MP4 is hardware decoded on all Android devices
+            val standardPaths = dloadPaths.filterNot { it.contains("-av1", ignoreCase = true) }
+            val candidatePaths = if (standardPaths.isNotEmpty()) standardPaths else dloadPaths
+
+            // Sort candidate paths descending by resolution (1080p -> 720p -> 480p -> 360p -> 240p)
+            val qualityOrder = mapOf("1080p" to 1, "720p" to 2, "480p" to 3, "360p" to 4, "240p" to 5)
+            val sortedCandidates = candidatePaths.sortedBy { path ->
+                when {
+                    path.contains("1080") -> 1
+                    path.contains("720") -> 2
+                    path.contains("480") -> 3
+                    path.contains("360") -> 4
+                    path.contains("240") -> 5
+                    else -> 99
+                }
+            }
+
+            // Resolve available quality links in parallel safely with supervisorScope
+            val resolvedEpisodes = supervisorScope {
+                sortedCandidates.map { path ->
                     async {
-                        val qualityLabel = when {
-                            path.contains("1080") -> "1080p"
-                            path.contains("720") -> "720p"
-                            path.contains("480") -> "480p"
-                            path.contains("360") -> "360p"
-                            path.contains("240") -> "240p"
-                            else -> "HD"
+                        try {
+                            val qualityLabel = when {
+                                path.contains("1080") -> "1080p"
+                                path.contains("720") -> "720p"
+                                path.contains("480") -> "480p"
+                                path.contains("360") -> "360p"
+                                path.contains("240") -> "240p"
+                                else -> "HD"
+                            }
+                            val resolved = resolveDloadRedirect("$mainUrl$path")
+                            if (!resolved.isNullOrBlank()) {
+                                qualityLabel to resolved
+                            } else null
+                        } catch (_: Throwable) {
+                            null
                         }
-                        val resolved = resolveDloadRedirect("$mainUrl$path")
-                        if (!resolved.isNullOrBlank()) {
-                            qualityLabel to resolved
-                        } else null
                     }
                 }.awaitAll().filterNotNull()
             }
 
-            val qualityOrder = mapOf("1080p" to 1, "720p" to 2, "480p" to 3, "360p" to 4, "240p" to 5)
             val sortedEpisodes = resolvedEpisodes
                 .distinctBy { it.first }
                 .sortedBy { qualityOrder[it.first] ?: 99 }
@@ -174,32 +232,14 @@ class EpornerPlugin(
             episodes = if (sortedEpisodes.isNotEmpty()) {
                 sortedEpisodes
             } else {
-                // Fallback: contentUrl
-                var fallbackUrl: String? = null
-                val contentM = contentUrlPattern.matcher(html)
-                if (contentM.find()) {
-                    fallbackUrl = contentM.group(1)?.replace("&amp;", "&")
-                }
-                if (!fallbackUrl.isNullOrBlank()) {
-                    listOf(
-                        EpisodeItem(
-                            id = videoId,
-                            title = "HD",
-                            seasonNumber = 1,
-                            episodeNumber = 1,
-                            data = fallbackUrl,
-                            thumbnail = mediaItem.posterUrl,
-                            duration = duration
-                        )
-                    )
-                } else emptyList()
+                emptyList()
             }
         }
 
         MediaDetail(
-            id = videoId,
+            id = mediaItem.id,
             title = resolvedTitle,
-            url = videoPageUrl,
+            url = mediaItem.url.ifBlank { videoPageUrl },
             posterUrl = mediaItem.posterUrl,
             backdropUrl = mediaItem.backdropUrl ?: mediaItem.posterUrl,
             type = MediaType.MOVIE,
@@ -223,25 +263,30 @@ class EpornerPlugin(
         )
 
         val cleanUrl = episodeData.substringBefore("?dload=")
+        val resolvedUrl = if (cleanUrl.contains("/dload/")) {
+            resolveDloadRedirect(cleanUrl)
+        } else {
+            cleanUrl
+        }
 
-        if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+        if (!resolvedUrl.isNullOrBlank() && !resolvedUrl.contains("/login", ignoreCase = true) && (resolvedUrl.startsWith("http://") || resolvedUrl.startsWith("https://"))) {
             val quality = when {
-                cleanUrl.contains("1440") -> "1440p 2K"
-                cleanUrl.contains("1080") -> "1080p"
-                cleanUrl.contains("720") -> "720p"
-                cleanUrl.contains("480") -> "480p"
-                cleanUrl.contains("360") -> "360p"
-                cleanUrl.contains("240") -> "240p"
+                resolvedUrl.contains("1440") -> "1440p 2K"
+                resolvedUrl.contains("1080") -> "1080p"
+                resolvedUrl.contains("720") -> "720p"
+                resolvedUrl.contains("480") -> "480p"
+                resolvedUrl.contains("360") -> "360p"
+                resolvedUrl.contains("240") -> "240p"
                 else -> "HD"
             }
             return@withContext StreamResult(
                 streams = listOf(
                     StreamSource(
-                        url = cleanUrl,
+                        url = resolvedUrl,
                         serverName = "EPorner High-Speed CDN ($quality)",
                         resolutionLabel = quality,
                         quality = quality,
-                        isM3u8 = cleanUrl.contains(".m3u8"),
+                        isM3u8 = resolvedUrl.contains(".m3u8"),
                         headers = streamHeaders
                     )
                 )
@@ -273,25 +318,22 @@ class EpornerPlugin(
 
     private fun fetchApiVideos(query: String, order: String = "top-weekly", page: Int = 1, count: Int = 20): List<MediaItem> {
         val encoded = URLEncoder.encode(query.trim(), "UTF-8")
-        val mirrors = listOf("https://www.eporner.com", "https://www.eporner.net")
-        for (mirror in mirrors) {
-            val url = "$mirror/api/v2/video/search/?query=$encoded&per_page=$count&page=$page&thumbsize=big&order=$order&format=json"
-            try {
-                val req = Request.Builder()
-                    .url(url)
-                    .header("User-Agent", defaultUserAgent)
-                    .build()
-                client.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val bodyStr = resp.body?.string()
-                        if (!bodyStr.isNullOrBlank()) {
-                            val items = parseApiJson(bodyStr)
-                            if (items.isNotEmpty()) return items
-                        }
+        val url = "$mainUrl/api/v2/video/search/?query=$encoded&per_page=$count&page=$page&thumbsize=big&order=$order&format=json"
+        try {
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", defaultUserAgent)
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val bodyStr = resp.body?.string()
+                    if (!bodyStr.isNullOrBlank()) {
+                        val items = parseApiJson(bodyStr)
+                        if (items.isNotEmpty()) return items
                     }
                 }
-            } catch (_: Exception) {}
-        }
+            }
+        } catch (_: Exception) {}
         return emptyList()
     }
 
@@ -333,7 +375,10 @@ class EpornerPlugin(
 
     private fun resolveDloadRedirect(dloadUrl: String): String? {
         return try {
-            val noRedirectClient = client.newBuilder().followRedirects(false).build()
+            val noRedirectClient = client.newBuilder()
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build()
             val req = Request.Builder()
                 .url(dloadUrl)
                 .header("User-Agent", defaultUserAgent)
@@ -341,7 +386,13 @@ class EpornerPlugin(
                 .build()
             noRedirectClient.newCall(req).execute().use { resp ->
                 val loc = resp.header("Location") ?: return null
+                if (loc.contains("/login", ignoreCase = true) || loc.contains("login.", ignoreCase = true)) {
+                    return null
+                }
                 val fullUrl = if (loc.startsWith("/")) "$mainUrl$loc" else loc
+                if (!fullUrl.contains(".mp4") && !fullUrl.contains(".m3u8")) {
+                    return null
+                }
                 fullUrl.substringBefore("?dload=")
             }
         } catch (_: Exception) {
