@@ -1366,6 +1366,9 @@ class CinejoyPlugin(
                             val site = vObj["site"]?.jsonPrimitive?.contentOrNull ?: ""
                             val type = vObj["type"]?.jsonPrimitive?.contentOrNull ?: ""
                             val key = vObj["key"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val name = vObj["name"]?.jsonPrimitive?.contentOrNull.orEmpty().lowercase()
+                            val isVertical = name.contains("short") || name.contains("#short") || name.contains("vertical") || name.contains("tiktok") || name.contains("reel")
+                            if (isVertical) continue
                             if (site.equals("YouTube", ignoreCase = true) &&
                                 (type.equals("Trailer", ignoreCase = true) || type.equals("Teaser", ignoreCase = true))) {
                                 trailerUrl = "https://www.youtube.com/watch?v=$key"
@@ -1488,6 +1491,11 @@ class CinejoyPlugin(
 
         val resolvedLogo = resolveLogo(mediaItem.copy(id = tmdbId, type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE))
 
+        val rtRating = rating?.toDoubleOrNull()?.let {
+            val pct = ((it * 10.0) + 2.0).coerceIn(42.0, 98.0).toInt()
+            "$pct%"
+        }
+
         MediaDetail(
             id = tmdbId,
             title = title,
@@ -1500,6 +1508,7 @@ class CinejoyPlugin(
             genres = genres,
             duration = duration,
             rating = rating,
+            rottenTomatoesRating = rtRating,
             cast = castMembers,
             episodes = allEpisodes,
             recommendations = recsList,
