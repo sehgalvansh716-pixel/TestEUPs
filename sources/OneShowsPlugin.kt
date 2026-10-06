@@ -104,7 +104,7 @@ class OneShowsPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "1shows",
         name = "1Shows",
-        version = 4,
+        version = 5,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.OneShowsPlugin",
@@ -492,9 +492,51 @@ class OneShowsPlugin(
                             if (body.isNotBlank() && body.startsWith("{")) {
                                 val root = json.parseToJsonElement(body).jsonObject
                                 for ((srvName, srvVal) in root) {
-                                    val encUrl = srvVal.jsonObject["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                                    val encUrl = srvVal.jsonObject["url"]?.jsonPrimitive?.contentOrNull
+                                    if (encUrl.isNullOrBlank() || encUrl.equals("null", ignoreCase = true)) continue
                                     val decryptedUrl = OneShowsWasmEngine.decryptVidrockPayload(encUrl) ?: continue
                                     if (!decryptedUrl.startsWith("http")) continue
+
+                                    val srvLang = srvVal.jsonObject["language"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { "English" } ?: "English"
+                                    val iso = when (srvLang.lowercase()) {
+                                        "english" -> "en"
+                                        "hindi" -> "hi"
+                                        "spanish" -> "es"
+                                        "french" -> "fr"
+                                        "german" -> "de"
+                                        "italian" -> "it"
+                                        "portuguese" -> "pt"
+                                        "japanese" -> "ja"
+                                        "korean" -> "ko"
+                                        "chinese" -> "zh"
+                                        "russian" -> "ru"
+                                        "arabic" -> "ar"
+                                        "tamil" -> "ta"
+                                        "telugu" -> "te"
+                                        else -> srvLang.take(2).lowercase()
+                                    }
+                                    val audioTracks = listOf(
+                                        CoreAudioTrackDescriptor(
+                                            languageName = srvLang,
+                                            isoCode = iso,
+                                            channels = 2,
+                                            codec = "AAC"
+                                        )
+                                    )
+                                    val eupAudioTracks = listOf(
+                                        EupAudioTrackDescriptor(
+                                            label = "$srvLang (Stereo AAC)",
+                                            language = iso,
+                                            isDefault = iso == "en",
+                                            codec = "aac",
+                                            channelCount = 2
+                                        )
+                                    )
+                                    val relType = when {
+                                        srvLang.equals("hindi", ignoreCase = true) -> AudioReleaseType.DUB
+                                        srvLang.equals("english", ignoreCase = true) -> AudioReleaseType.ORIGINAL
+                                        else -> AudioReleaseType.DUB
+                                    }
 
                                     val sourceId = "1shows:vidrock:$tmdbId:$srvName"
                                     val reqHeaders = mapOf(
@@ -506,11 +548,12 @@ class OneShowsPlugin(
                                     val eupSource = EupStreamSource(
                                         id = sourceId,
                                         serverId = "vidrock_$srvName",
-                                        serverLabel = "Vidrock $srvName (1080p HLS)",
+                                        serverLabel = "Vidrock $srvName (1080p HLS - $srvLang)",
                                         url = decryptedUrl,
                                         kind = StreamKind.HLS,
                                         headers = HeaderPolicy(sticky = reqHeaders),
                                         video = VideoInfo(height = 1080),
+                                        audioTracks = eupAudioTracks,
                                         introOffsetMs = introOffsetMs,
                                         expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
                                         refreshHandle = "v1|1|$srvName"
@@ -529,11 +572,12 @@ class OneShowsPlugin(
 
                                     val legacySource = CoreStreamSource(
                                         url = decryptedUrl,
-                                        serverName = "Vidrock ($srvName)",
+                                        serverName = "Vidrock ($srvName - $srvLang)",
                                         resolutionLabel = "1080p FHD",
-                                        quality = "1Shows Vidrock $srvName (1080p HLS)",
+                                        quality = "1Shows Vidrock $srvName [1080p FHD - $srvLang]",
                                         isM3u8 = true,
-                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        audioTracks = audioTracks,
+                                        releaseType = relType,
                                         headers = reqHeaders
                                     )
                                     if (emittedStreamKeys.add(decryptedUrl)) {
@@ -569,7 +613,7 @@ class OneShowsPlugin(
                         val seedObj = json.parseToJsonElement(seedBody).jsonObject
                         val seed = seedObj["seed"]?.jsonPrimitive?.contentOrNull
                         if (!seed.isNullOrBlank()) {
-                            val candidateServers = listOf("atlanta", "miami")
+                            val candidateServers = listOf("atlanta", "miami", "dallas", "phoenix")
                             coroutineScope {
                                 for (srv in candidateServers) {
                                     launch {
@@ -599,21 +643,49 @@ class OneShowsPlugin(
                                                                 val sObj = item.jsonObject
                                                                 val sUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
                                                                 val sQuality = sObj["quality"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                                                                val cleanResolutionLabel = when {
+                                                                    sQuality.contains("2160") || sQuality.contains("4k", ignoreCase = true) -> "4K UHD"
+                                                                    sQuality.contains("1080") -> "1080p FHD"
+                                                                    sQuality.contains("720") -> "720p HD"
+                                                                    sQuality.contains("480") -> "480p SD"
+                                                                    sQuality.contains("360") -> "360p SD"
+                                                                    sQuality.contains("auto", ignoreCase = true) -> "Auto (HLS)"
+                                                                    else -> "$sQuality HD"
+                                                                }
                                                                 val reqHeaders = mapOf(
                                                                     "Referer" to "https://www.vidy.st/",
                                                                     "Origin" to "https://www.vidy.st",
                                                                     "User-Agent" to defaultHeaders["User-Agent"]!!
                                                                 )
 
-                                                                val sourceId = "1shows:vidy:$tmdbId:$srv:$sQuality"
+                                                                val vidyAudioTracks = listOf(
+                                                                    CoreAudioTrackDescriptor(
+                                                                        languageName = "English",
+                                                                        isoCode = "en",
+                                                                        channels = 2,
+                                                                        codec = "AAC"
+                                                                    )
+                                                                )
+                                                                val vidyEupAudio = listOf(
+                                                                    EupAudioTrackDescriptor(
+                                                                        label = "English (Stereo AAC)",
+                                                                        language = "en",
+                                                                        isDefault = true,
+                                                                        codec = "aac",
+                                                                        channelCount = 2
+                                                                    )
+                                                                )
+
+                                                                val sourceId = "1shows:vidy:$tmdbId:$srv:$cleanResolutionLabel"
                                                                 val eupSource = EupStreamSource(
                                                                     id = sourceId,
-                                                                    serverId = "vidy_${srv}_$sQuality",
-                                                                    serverLabel = "Vidy $srv ($sQuality HLS)",
+                                                                    serverId = "vidy_${srv}_${sQuality.filter { it.isLetterOrDigit() }}",
+                                                                    serverLabel = "Vidy $srv ($cleanResolutionLabel HLS)",
                                                                     url = sUrl,
                                                                     kind = StreamKind.HLS,
                                                                     headers = HeaderPolicy(sticky = reqHeaders),
                                                                     video = VideoInfo(height = if (sQuality.contains("1080")) 1080 else if (sQuality.contains("720")) 720 else 360),
+                                                                    audioTracks = vidyEupAudio,
                                                                     introOffsetMs = introOffsetMs,
                                                                     expiresAtEpochMs = System.currentTimeMillis() + (25 * 60_000L),
                                                                     refreshHandle = "v1|1|$srv"
@@ -632,10 +704,11 @@ class OneShowsPlugin(
 
                                                                 val legacySource = CoreStreamSource(
                                                                     url = sUrl,
-                                                                    serverName = "Vidy ($srv $sQuality)",
-                                                                    resolutionLabel = sQuality,
-                                                                    quality = "1Shows Vidy $srv ($sQuality HLS)",
+                                                                    serverName = "Vidy ($srv $cleanResolutionLabel)",
+                                                                    resolutionLabel = cleanResolutionLabel,
+                                                                    quality = "1Shows Vidy $srv [$cleanResolutionLabel]",
                                                                     isM3u8 = true,
+                                                                    audioTracks = vidyAudioTracks,
                                                                     releaseType = AudioReleaseType.ORIGINAL,
                                                                     headers = reqHeaders
                                                                 )
@@ -714,29 +787,111 @@ class OneShowsPlugin(
 
                                                 // STRICT FILTERING: Only emit playable media files as video streams!
                                                 // Exclude web landing pages and file locker aggregators from player stream emission
-                                                val isPlayableStream = url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv") || url.contains("111477.xyz")
-                                                val isHtmlLocker = url.contains("greenmotors") || url.contains("moondl") || url.contains("takefile") || url.contains("modpro") || url.contains("hbplay.pages.dev")
-                                                if (!url.startsWith("http") || !isPlayableStream || isHtmlLocker) continue
+                                                val isPlayableStream = (url.contains(".m3u8") || url.contains(".mp4") || url.contains(".mkv")) &&
+                                                        !url.contains("greenmotors") && !url.contains("moondl") && !url.contains("takefile") &&
+                                                        !url.contains("modpro") && !url.contains("hbplay.pages.dev")
+                                                if (!url.startsWith("http") || !isPlayableStream) continue
+
+                                                // Fast non-destructive probe to ensure stream is not dead / 403 / 404 (e.g. dead 111477.xyz link)
+                                                val isLive = withTimeoutOrNull(1000L) {
+                                                    try {
+                                                        val testReq = Request.Builder()
+                                                            .url(url)
+                                                            .header("Range", "bytes=0-1024")
+                                                            .header("User-Agent", defaultHeaders["User-Agent"]!!)
+                                                            .build()
+                                                        http.meta.newCall(testReq).execute().use { resp ->
+                                                            resp.isSuccessful || resp.code == 206 || resp.code == 200
+                                                        }
+                                                    } catch (_: Throwable) { false }
+                                                } ?: false
+
+                                                if (!isLive) continue
 
                                                 val isM3u8 = url.contains(".m3u8")
                                                 val is4K = label.contains("2160") || label.contains("4K", ignoreCase = true)
                                                 val isFHD = label.contains("1080")
                                                 val isHD = label.contains("720")
+                                                val isSD = label.contains("480") || label.contains("360")
                                                 val qualityLabel = when {
                                                     is4K -> "4K UHD"
                                                     isFHD -> "1080p FHD"
                                                     isHD -> "720p HD"
-                                                    else -> "720p HD"
+                                                    isSD -> "480p SD"
+                                                    else -> "1080p FHD"
+                                                }
+
+                                                val isMulti = label.contains("Multi", ignoreCase = true) || label.contains("Dual", ignoreCase = true)
+                                                val isHindi = label.contains("Hindi", ignoreCase = true)
+                                                val isJapanese = label.contains("Japanese", ignoreCase = true)
+
+                                                val makimaAudioTracks = mutableListOf<CoreAudioTrackDescriptor>()
+                                                val relType = when {
+                                                    isMulti -> {
+                                                        makimaAudioTracks.add(CoreAudioTrackDescriptor("English", "en", 2, "AAC"))
+                                                        makimaAudioTracks.add(CoreAudioTrackDescriptor("Hindi", "hi", 2, "AAC"))
+                                                        AudioReleaseType.DUAL_AUDIO
+                                                    }
+                                                    isHindi -> {
+                                                        makimaAudioTracks.add(CoreAudioTrackDescriptor("Hindi", "hi", 2, "AAC"))
+                                                        AudioReleaseType.DUB
+                                                    }
+                                                    isJapanese -> {
+                                                        makimaAudioTracks.add(CoreAudioTrackDescriptor("Japanese", "ja", 2, "AAC"))
+                                                        AudioReleaseType.DUB
+                                                    }
+                                                    else -> {
+                                                        makimaAudioTracks.add(CoreAudioTrackDescriptor("English", "en", 2, "AAC"))
+                                                        AudioReleaseType.ORIGINAL
+                                                    }
+                                                }
+
+                                                val eupAudioTracks = makimaAudioTracks.map {
+                                                    EupAudioTrackDescriptor(
+                                                        label = "${it.languageName} (${it.codec ?: "AAC"})",
+                                                        language = it.isoCode,
+                                                        isDefault = it.isoCode == "en",
+                                                        codec = it.codec?.lowercase() ?: "aac",
+                                                        channelCount = it.channels
+                                                    )
                                                 }
 
                                                 val cleanLabel = label.take(60)
+                                                val sourceId = "1shows:makima:$tmdbId:${url.hashCode()}"
+                                                val height = if (is4K) 2160 else if (isFHD) 1080 else if (isHD) 720 else 480
+                                                val eupSource = EupStreamSource(
+                                                    id = sourceId,
+                                                    serverId = "makima_${cleanLabel.take(15)}",
+                                                    serverLabel = "MakimaDL $cleanLabel ($qualityLabel)",
+                                                    url = url,
+                                                    kind = if (isM3u8) StreamKind.HLS else StreamKind.PROGRESSIVE,
+                                                    headers = HeaderPolicy(sticky = defaultHeaders),
+                                                    video = VideoInfo(height = height),
+                                                    audioTracks = eupAudioTracks,
+                                                    introOffsetMs = introOffsetMs,
+                                                    expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
+                                                    refreshHandle = "v1|1|makima"
+                                                )
+                                                sourceEntries[sourceId] = CachedSourceEntry(
+                                                    tmdbId = tmdbId,
+                                                    isTv = isTv,
+                                                    season = season,
+                                                    episode = episode,
+                                                    serverId = "makima",
+                                                    gen = 1,
+                                                    realUrl = url,
+                                                    realSource = eupSource,
+                                                    expiresAtMs = System.currentTimeMillis() + (30 * 60_000L)
+                                                )
+
                                                 val source = CoreStreamSource(
                                                     url = url,
                                                     serverName = "MakimaDL ($cleanLabel)",
                                                     resolutionLabel = qualityLabel,
                                                     quality = "1Shows MakimaDL [$qualityLabel] $cleanLabel",
                                                     isM3u8 = isM3u8,
-                                                    releaseType = if (label.contains("Multi", ignoreCase = true) || label.contains("Hindi", ignoreCase = true)) AudioReleaseType.DUAL_AUDIO else AudioReleaseType.ORIGINAL,
+                                                    audioTracks = makimaAudioTracks,
+                                                    releaseType = relType,
                                                     headers = defaultHeaders
                                                 )
                                                 if (emittedStreamKeys.add(url)) {
@@ -933,7 +1088,18 @@ class OneShowsPlugin(
                             s.resolutionLabel.contains("2160") || s.quality.contains("4K") -> 2160
                             s.resolutionLabel.contains("1080") -> 1080
                             s.resolutionLabel.contains("720") -> 720
+                            s.resolutionLabel.contains("480") -> 480
+                            s.resolutionLabel.contains("360") -> 360
                             else -> 1080
+                        }
+                        val eupAudioTracks = s.audioTracks.map {
+                            EupAudioTrackDescriptor(
+                                label = "${it.languageName} (${it.codec ?: "AAC"})",
+                                language = it.isoCode,
+                                isDefault = it.isoCode == "en",
+                                codec = it.codec?.lowercase() ?: "aac",
+                                channelCount = it.channels
+                            )
                         }
                         val src = EupStreamSource(
                             id = sourceId,
@@ -943,6 +1109,7 @@ class OneShowsPlugin(
                             kind = if (s.isM3u8) StreamKind.HLS else StreamKind.PROGRESSIVE,
                             headers = HeaderPolicy(sticky = s.headers),
                             video = VideoInfo(height = height),
+                            audioTracks = eupAudioTracks,
                             expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
                             refreshHandle = "v1|1|${s.serverName}"
                         )

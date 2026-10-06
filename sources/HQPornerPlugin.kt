@@ -1,4 +1,4 @@
-﻿package com.euthopiar.core.provider
+package com.euthopiar.core.provider
 
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
@@ -37,7 +37,7 @@ class HQPornerPlugin(
         """<a href="(/hdporn/(\d+)-[^"]+\.html)"[\s\S]*?<img id="cover_\d+" src="([^"]+)"[\s\S]*?<h3 class="meta-data-title"><a[^>]*>([^<]+)</a></h3>[\s\S]*?<span class="icon fa-clock-o meta-data">([^<]+)</span>"""
     )
     private val embedParamRegex = Pattern.compile("""url:\s*'/blocks/(?:nativeplayer|altplayer)\.php\?i=([^']+)'""")
-    private val sourceRegex = Pattern.compile("""<source\s+src="([^"]+)"(?:\s+title="([^"]+)")?""")
+    private val sourceRegex = Pattern.compile("""<source\s+src=[\\"]*([^\\"\'>]+)[\\"]*(?:\s+title=[\\"]*([^\\"\'>]+)[\\"]*)?""", Pattern.CASE_INSENSITIVE)
 
     override suspend fun getHomeCatalog(): List<CatalogRow> = withContext(Dispatchers.IO) {
         val rows = mutableListOf<CatalogRow>()
@@ -175,9 +175,9 @@ class HQPornerPlugin(
                     val sMatcher = sourceRegex.matcher(embedHtml)
                     var epIndex = 1
                     while (sMatcher.find()) {
-                        var streamSrc = sMatcher.group(1) ?: continue
+                        var streamSrc = sMatcher.group(1)?.replace("\\", "")?.trim() ?: continue
                         if (streamSrc.startsWith("//")) streamSrc = "https:$streamSrc"
-                        val streamTitle = sMatcher.group(2)?.trim() ?: "Direct Stream"
+                        val streamTitle = sMatcher.group(2)?.replace("\\", "")?.trim() ?: "Direct Stream"
 
                         val label = when {
                             streamTitle.contains("2160", ignoreCase = true) || streamTitle.contains("4K", ignoreCase = true) -> "4K Ultra HD"
@@ -197,6 +197,33 @@ class HQPornerPlugin(
                             )
                         )
                         epIndex++
+                    }
+
+                    if (episodes.isEmpty()) {
+                        val cdnMatcher = Pattern.compile("""(?://|https?://)([a-zA-Z0-9.-]+\.bigcdn\.cc/[^\\"\'>\s]+\.mp4)""").matcher(embedHtml)
+                        val seen = mutableSetOf<String>()
+                        while (cdnMatcher.find()) {
+                            val raw = cdnMatcher.group(1) ?: continue
+                            val streamSrc = "https://$raw"
+                            if (seen.add(streamSrc)) {
+                                val label = when {
+                                    streamSrc.contains("1080") -> "1080p Full HD"
+                                    streamSrc.contains("720") -> "720p HD"
+                                    streamSrc.contains("360") -> "360p Standard"
+                                    else -> "Direct Stream"
+                                }
+                                episodes.add(
+                                    EpisodeItem(
+                                        id = "${mediaItem.id}_$epIndex",
+                                        seasonNumber = 1,
+                                        episodeNumber = epIndex,
+                                        title = label,
+                                        data = streamSrc
+                                    )
+                                )
+                                epIndex++
+                            }
+                        }
                     }
                 }
             }
