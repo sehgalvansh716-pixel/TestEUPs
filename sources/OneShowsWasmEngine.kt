@@ -17,6 +17,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.net.URI
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
@@ -960,6 +961,96 @@ object OneShowsWasmEngine {
         val nonce = getVidukiSessionNonce(client, baseUrl) ?: return@withContext null
         val path = if (isTv) "/premium_embeds/tv/$tmdbId/$season/$episode" else "/premium_embeds/movie/$tmdbId"
         decryptVidukiMainStream(client, baseUrl, nonce, path)
+    }
+
+    data class DexterStream(
+        val serverName: String,
+        val masterHlsUrl: String
+    )
+
+    suspend fun resolveDexterStreams(
+        client: OkHttpClient,
+        isTv: Boolean,
+        tmdbId: String,
+        season: Int = 1,
+        episode: Int = 1
+    ): List<DexterStream> = withContext(Dispatchers.IO) {
+        try {
+            val path = if (isTv) "/e/tv/$tmdbId/$season/$episode?autostart=true" else "/e/movie/$tmdbId?autostart=true"
+            val embedUrl = "https://play.xpass.top$path"
+            val req = Request.Builder()
+                .url(embedUrl)
+                .header("Referer", "https://www.viduki.net/")
+                .header("User-Agent", USER_AGENT)
+                .build()
+            val html = client.newCall(req).execute().use { it.body?.string().orEmpty() }
+            val dataUrlMatch = Regex("""var\s+dataUrl\s*=\s*['"]([^'"]+)['"]""").find(html) ?: return@withContext emptyList()
+            val dataUrl = dataUrlMatch.groupValues[1]
+            val fullDataUrl = if (dataUrl.startsWith("http")) dataUrl else "https://play.xpass.top$dataUrl"
+
+            val uri = URI(fullDataUrl)
+            val pathname = uri.path
+            val query = uri.query.orEmpty()
+            val token = query.split('&').firstOrNull { it.startsWith("token=") }?.removePrefix("token=").orEmpty()
+            if (token.isBlank()) return@withContext emptyList()
+
+            val req2 = Request.Builder()
+                .url(fullDataUrl)
+                .header("Referer", embedUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .build()
+            val encData = client.newCall(req2).execute().use { it.body?.string().orEmpty().trim() }
+            if (encData.isBlank()) return@withContext emptyList()
+
+            var norm = encData.replace('-', '+').replace('_', '/')
+            while (norm.length % 4 != 0) norm += "="
+            val raw = Base64.getDecoder().decode(norm)
+            if (raw.size < 28) return@withContext emptyList()
+
+            val iv = raw.copyOfRange(0, 12)
+            val ctAndTag = raw.copyOfRange(12, raw.size)
+
+            val secret = "spv3-data-response|spv3-build-1787821613-50e5fc97c9dce367|$pathname|$token"
+            val md = MessageDigest.getInstance("SHA-256")
+            val keyBytes = md.digest(secret.toByteArray(Charsets.UTF_8))
+
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), GCMParameterSpec(128, iv))
+            val decBytes = cipher.doFinal(ctAndTag)
+            val decJson = String(decBytes, Charsets.UTF_8)
+
+            val serversArr = json.parseToJsonElement(decJson).jsonArray
+            val results = mutableListOf<DexterStream>()
+
+            for (elem in serversArr.take(3)) {
+                val sObj = elem.jsonObject
+                val sName = sObj["name"]?.jsonPrimitive?.contentOrNull ?: "Server"
+                val sUrl = sObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
+                val fullPlUrl = if (sUrl.startsWith("http")) sUrl else "https://play.xpass.top$sUrl"
+
+                val plReq = Request.Builder()
+                    .url(fullPlUrl)
+                    .header("Referer", "https://play.xpass.top/")
+                    .header("User-Agent", USER_AGENT)
+                    .build()
+                val plResp = client.newCall(plReq).execute().use { it.body?.string().orEmpty() }
+                if (plResp.isNotBlank() && plResp.contains("playlist")) {
+                    val plObj = json.parseToJsonElement(plResp).jsonObject
+                    val sourcesArr = plObj["playlist"]?.jsonArray?.firstOrNull()?.jsonObject?.get("sources")?.jsonArray
+                    val masterFile = sourcesArr?.firstOrNull()?.jsonObject?.get("file")?.jsonPrimitive?.contentOrNull
+                    if (!masterFile.isNullOrBlank() && masterFile.startsWith("http")) {
+                        results.add(DexterStream(sName, masterFile))
+                    }
+                }
+            }
+            results
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            safeLog("OneShowsWasmEngine", "resolveDexterStreams error: ${t.message}", t)
+            emptyList()
+        }
     }
 
     fun prewarm(client: OkHttpClient) {
