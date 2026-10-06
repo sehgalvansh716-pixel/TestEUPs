@@ -95,7 +95,7 @@ class BingrPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "bingr",
         name = "Bingr",
-        version = 2,
+        version = 3,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.BingrPlugin",
@@ -180,6 +180,60 @@ class BingrPlugin(
     private val refreshLocks = ConcurrentHashMap<String, Mutex>()
     private val imdbIdCache = ConcurrentHashMap<String, String>()
     private val tmdbIdAnimeCache = ConcurrentHashMap<String, String>()
+    private val mediaTypeCache = ConcurrentHashMap<String, MediaType>()
+
+    private data class ParsedMediaTarget(
+        val tmdbId: String,
+        val isTv: Boolean,
+        val isAnime: Boolean,
+        val season: Int?,
+        val episode: Int?,
+        val animeId: String? = null
+    )
+
+    private fun parseTarget(data: String): ParsedMediaTarget {
+        val clean = data.trim().removePrefix("eup://bingr/").removePrefix("eup://")
+        if (clean.startsWith("anime/", ignoreCase = true)) {
+            val parts = clean.removePrefix("anime/").split('/')
+            val aId = parts.getOrNull(0)?.filter { it.isDigit() }.orEmpty()
+            val ep = parts.getOrNull(1)?.toIntOrNull() ?: 1
+            val tmdb = tmdbIdAnimeCache[aId] ?: aId
+            return ParsedMediaTarget(tmdbId = tmdb, isTv = false, isAnime = true, season = 1, episode = ep, animeId = aId)
+        }
+        if (clean.startsWith("tv/", ignoreCase = true)) {
+            val parts = clean.removePrefix("tv/").split('/')
+            val id = parts.getOrNull(0)?.filter { it.isDigit() }.orEmpty()
+            val s = parts.getOrNull(1)?.toIntOrNull() ?: 1
+            val ep = parts.getOrNull(2)?.toIntOrNull() ?: 1
+            return ParsedMediaTarget(tmdbId = id, isTv = true, isAnime = false, season = s, episode = ep)
+        }
+        if (clean.startsWith("movie/", ignoreCase = true)) {
+            val id = clean.removePrefix("movie/").split('/').firstOrNull()?.filter { it.isDigit() }.orEmpty()
+            return ParsedMediaTarget(tmdbId = id, isTv = false, isAnime = false, season = null, episode = null)
+        }
+        if (clean.contains(':')) {
+            val parts = clean.split(':')
+            val id = parts.getOrNull(0)?.filter { it.isDigit() }.orEmpty()
+            val s = parts.getOrNull(1)?.toIntOrNull() ?: 1
+            val ep = parts.getOrNull(2)?.toIntOrNull() ?: 1
+            val isAnime = tmdbIdAnimeCache.containsKey(id)
+            return ParsedMediaTarget(tmdbId = id, isTv = !isAnime, isAnime = isAnime, season = s, episode = ep, animeId = if (isAnime) id else null)
+        }
+        val parts = clean.split('/')
+        val firstDigits = parts.firstOrNull()?.filter { it.isDigit() }.orEmpty()
+        if (parts.size >= 3) {
+            val s = parts[1].toIntOrNull() ?: 1
+            val ep = parts[2].toIntOrNull() ?: 1
+            val isAnime = tmdbIdAnimeCache.containsKey(firstDigits)
+            val tmdb = tmdbIdAnimeCache[firstDigits] ?: firstDigits
+            return ParsedMediaTarget(tmdbId = tmdb, isTv = !isAnime, isAnime = isAnime, season = s, episode = ep, animeId = if (isAnime) firstDigits else null)
+        } else {
+            val isAnime = tmdbIdAnimeCache.containsKey(firstDigits)
+            val isTv = mediaTypeCache[firstDigits] == MediaType.TV_SERIES
+            val tmdb = tmdbIdAnimeCache[firstDigits] ?: firstDigits
+            return ParsedMediaTarget(tmdbId = tmdb, isTv = isTv, isAnime = isAnime, season = if (isTv) 1 else null, episode = if (isTv || isAnime) 1 else null, animeId = if (isAnime) firstDigits else null)
+        }
+    }
 
     private fun safeLog(tag: String, message: String, throwable: Throwable? = null) {
         try {
@@ -208,6 +262,7 @@ class BingrPlugin(
         refreshLocks.clear()
         imdbIdCache.clear()
         tmdbIdAnimeCache.clear()
+        mediaTypeCache.clear()
     }
 
     // ───────────────────────────── PagedCatalogProvider (31 Sections) ─────────────────────────────
@@ -528,7 +583,8 @@ class BingrPlugin(
 
             val seasons = mutableListOf<SeasonDescriptor>()
             val rawSeasons = root["seasons"]?.jsonArray
-            if (rawSeasons != null) {
+
+            if (isTv && rawSeasons != null) {
                 for (sItem in rawSeasons) {
                     val sObj = sItem.jsonObject
                     val sNum = sObj["season"]?.jsonPrimitive?.intOrNull ?: continue
@@ -538,27 +594,135 @@ class BingrPlugin(
                     val epCount = sObj["episodes"]?.jsonPrimitive?.intOrNull ?: 1
 
                     val epList = mutableListOf<EpisodeDescriptor>()
-                    for (epIdx in 1..epCount) {
-                        epList.add(
-                            EpisodeDescriptor(
-                                seasonNumber = sNum,
-                                episodeNumber = epIdx,
-                                title = "Episode $epIdx",
-                                target = PlayableTarget.Episode(
-                                    tmdbId = tmdbIdStr.toIntOrNull() ?: card.id.toIntOrNull() ?: 0,
-                                    season = sNum,
-                                    episode = epIdx,
-                                    title = title
+                    try {
+                        val epReq = Request.Builder()
+                            .url("$apiBaseUrl/episodes/${card.id}/$sNum")
+                            .header("User-Agent", eupHost?.defaultUserAgent ?: defaultUserAgent)
+                            .header("Referer", "https://bingr.one/")
+                            .header("Accept", "application/json")
+                            .build()
+
+                        val epBody = http.meta.newCall(epReq).execute().use { resp ->
+                            if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+                        }
+
+                        if (epBody.isNotBlank() && epBody.startsWith("{")) {
+                            val epRoot = json.parseToJsonElement(epBody).jsonObject
+                            val epArray = epRoot["episodes"]?.jsonArray
+                            if (epArray != null && epArray.isNotEmpty()) {
+                                for (eItem in epArray) {
+                                    val eObj = eItem.jsonObject
+                                    val eNum = eObj["episode"]?.jsonPrimitive?.intOrNull ?: continue
+                                    val eTitle = eObj["title"]?.jsonPrimitive?.contentOrNull ?: "Episode $eNum"
+                                    val eStill = eObj["still"]?.jsonPrimitive?.contentOrNull
+                                    val eOverview = eObj["overview"]?.jsonPrimitive?.contentOrNull
+                                    val eAirDate = eObj["air_date"]?.jsonPrimitive?.contentOrNull
+
+                                    epList.add(
+                                        EpisodeDescriptor(
+                                            seasonNumber = sNum,
+                                            episodeNumber = eNum,
+                                            title = eTitle,
+                                            stillUrl = eStill,
+                                            overview = eOverview,
+                                            target = PlayableTarget.Episode(
+                                                tmdbId = tmdbIdStr.toIntOrNull() ?: card.id.toIntOrNull() ?: 0,
+                                                season = sNum,
+                                                episode = eNum,
+                                                title = title
+                                            )
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    } catch (_: Throwable) {}
+
+                    if (epList.isEmpty()) {
+                        for (epIdx in 1..epCount) {
+                            epList.add(
+                                EpisodeDescriptor(
+                                    seasonNumber = sNum,
+                                    episodeNumber = epIdx,
+                                    title = "Episode $epIdx",
+                                    target = PlayableTarget.Episode(
+                                        tmdbId = tmdbIdStr.toIntOrNull() ?: card.id.toIntOrNull() ?: 0,
+                                        season = sNum,
+                                        episode = epIdx,
+                                        title = title
+                                    )
                                 )
                             )
-                        )
+                        }
                     }
 
                     seasons.add(
                         SeasonDescriptor(
                             seasonNumber = sNum,
                             name = sName,
-                            episodeCount = epCount,
+                            episodeCount = epList.size,
+                            episodes = epList
+                        )
+                    )
+                }
+            } else if (isAnime) {
+                val epList = mutableListOf<EpisodeDescriptor>()
+                val totalExpected = rawSeasons?.sumOf { it.jsonObject["episodes"]?.jsonPrimitive?.intOrNull ?: 0 } ?: 0
+                val maxChunks = if (totalExpected > 0) ((totalExpected + 99) / 100).coerceIn(1, 15) else 1
+
+                for (chunk in 1..maxChunks) {
+                    try {
+                        val chunkReq = Request.Builder()
+                            .url("$apiBaseUrl/anime/${card.id}/episodes?chunk=$chunk")
+                            .header("User-Agent", eupHost?.defaultUserAgent ?: defaultUserAgent)
+                            .header("Referer", "https://bingr.one/")
+                            .header("Accept", "application/json")
+                            .build()
+
+                        val chunkBody = http.meta.newCall(chunkReq).execute().use { resp ->
+                            if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+                        }
+
+                        if (chunkBody.isNotBlank() && chunkBody.startsWith("{")) {
+                            val chunkRoot = json.parseToJsonElement(chunkBody).jsonObject
+                            val chunkArray = chunkRoot["episodes"]?.jsonArray
+                            if (chunkArray != null && chunkArray.isNotEmpty()) {
+                                for (eItem in chunkArray) {
+                                    val eObj = eItem.jsonObject
+                                    val eNum = eObj["episode"]?.jsonPrimitive?.intOrNull ?: continue
+                                    val eTitle = eObj["title"]?.jsonPrimitive?.contentOrNull ?: "Episode $eNum"
+                                    val eStill = eObj["still"]?.jsonPrimitive?.contentOrNull
+                                    val eOverview = eObj["overview"]?.jsonPrimitive?.contentOrNull
+                                    val eAirDate = eObj["air_date"]?.jsonPrimitive?.contentOrNull
+
+                                    epList.add(
+                                        EpisodeDescriptor(
+                                            seasonNumber = 1,
+                                            episodeNumber = eNum,
+                                            title = eTitle,
+                                            stillUrl = eStill,
+                                            overview = eOverview,
+                                            target = PlayableTarget.Direct("eup://bingr/anime/${card.id}/$eNum")
+                                        )
+                                    )
+                                }
+                            } else {
+                                break
+                            }
+                        } else {
+                            break
+                        }
+                    } catch (_: Throwable) {
+                        break
+                    }
+                }
+
+                if (epList.isNotEmpty()) {
+                    seasons.add(
+                        SeasonDescriptor(
+                            seasonNumber = 1,
+                            name = "Episodes",
+                            episodeCount = epList.size,
                             episodes = epList
                         )
                     )
@@ -597,22 +761,36 @@ class BingrPlugin(
 
     // ───────────────────────────── StreamResolver (Multi-Audio, Multi-Server, AniSkip) ─────────────────────────────
     override fun resolve(target: PlayableTarget, ctx: ResolveContext): Flow<StreamBundleEvent> = channelFlow {
-        val isTv = target is PlayableTarget.Episode
-        val tmdbId = when (target) {
-            is PlayableTarget.Movie -> target.tmdbId
-            is PlayableTarget.Episode -> target.tmdbId
-            else -> 0
+        val parsed = when (target) {
+            is PlayableTarget.Movie -> ParsedMediaTarget(tmdbId = target.tmdbId.toString(), isTv = false, isAnime = false, season = null, episode = null)
+            is PlayableTarget.Episode -> ParsedMediaTarget(tmdbId = target.tmdbId.toString(), isTv = true, isAnime = false, season = target.season, episode = target.episode)
+            is PlayableTarget.Anime -> {
+                val mal = target.malId?.toString()
+                val tmdb = if (mal != null) tmdbIdAnimeCache[mal] ?: mal else "0"
+                ParsedMediaTarget(tmdbId = tmdb, isTv = false, isAnime = true, season = 1, episode = target.episode, animeId = mal)
+            }
+            is PlayableTarget.Direct -> parseTarget(target.pageUrl)
+            is PlayableTarget.DirectClip -> parseTarget(target.pageUrl)
+            is PlayableTarget.Opaque -> parseTarget(target.payload.toString())
         }
-        val season = if (isTv) (target as PlayableTarget.Episode).season else null
-        val episode = if (isTv) (target as PlayableTarget.Episode).episode else null
+
+        val isTv = parsed.isTv
+        val isAnime = parsed.isAnime
+        val tmdbId = parsed.tmdbId.toIntOrNull() ?: 0
+        val season = parsed.season
+        val episode = parsed.episode
+        val animeId = parsed.animeId
         val titleHint = when (target) {
             is PlayableTarget.Movie -> target.title.orEmpty()
             is PlayableTarget.Episode -> target.title.orEmpty()
-            else -> ""
+            is PlayableTarget.Anime -> target.title.orEmpty()
+            is PlayableTarget.Direct -> target.title.orEmpty()
+            is PlayableTarget.DirectClip -> target.title.orEmpty()
+            is PlayableTarget.Opaque -> target.title.orEmpty()
         }
 
-        if (tmdbId <= 0) {
-            send(StreamBundleEvent.Error("Invalid target TMDB identifier for Bingr: $tmdbId"))
+        if (tmdbId <= 0 && !isAnime) {
+            send(StreamBundleEvent.Error("Invalid target identifier for Bingr: ${parsed.tmdbId}"))
             return@channelFlow
         }
 
@@ -635,10 +813,11 @@ class BingrPlugin(
         }
 
         // 2. Subtitles: VDRK Multi-Lingual Cluster + OpenSubtitles v3 Bridge
-        val (eupSubs, _) = fetchCombinedSubtitles(tmdbId, isTv, season, episode, titleHint)
+        val (eupSubs, _) = if (tmdbId > 0) fetchCombinedSubtitles(tmdbId, isTv, season, episode, titleHint) else Pair(emptyList(), emptyList())
 
         // 3. Cluster 1: Vidrift Orion Multi-Audio & Multi-Container Streaming
         val vidriftJob = launch {
+            if (tmdbId <= 0) return@launch
             withTimeoutOrNull(4500L) {
                 try {
                     val vidriftUrl = if (isTv && season != null && episode != null) {
@@ -674,6 +853,7 @@ class BingrPlugin(
 
         // 4. Cluster 2: Vidy High-Speed CDN Streaming (Pure-JVM PRNG Keystream Cipher)
         val vidyJob = launch {
+            if (tmdbId <= 0) return@launch
             withTimeoutOrNull(4500L) {
                 try {
                     val seedUrl = "$vidyApiBaseUrl/seed?mediaId=$tmdbId"
@@ -746,10 +926,24 @@ class BingrPlugin(
         val webResolverJob = launch {
             legacyHost?.browserResolver?.let { resolver ->
                 withTimeoutOrNull(6000L) {
-                    val embeds = listOf(
-                        "filmu" to if (isTv && season != null && episode != null) "https://embed.filmu.in/tv/$tmdbId/$season/$episode" else "https://embed.filmu.in/movie/$tmdbId",
-                        "cinezo" to if (isTv && season != null && episode != null) "https://player.cinezo.live/embed/tv/$tmdbId/$season/$episode" else "https://player.cinezo.live/embed/movie/$tmdbId"
-                    )
+                    val embeds = when {
+                        isAnime -> listOf(
+                            "filmu" to "https://embed.filmu.in/anime/${animeId ?: tmdbId}/${episode ?: 1}",
+                            "cinezo" to "https://player.cinezo.live/embed/anime/${animeId ?: tmdbId}/${episode ?: 1}?dub=true",
+                            "cinezo_sub" to "https://player.cinezo.live/embed/anime/${animeId ?: tmdbId}/${episode ?: 1}",
+                            "vidbolt" to "https://vidbolt.xyz/anime/${animeId ?: tmdbId}/${episode ?: 1}"
+                        )
+                        isTv && season != null && episode != null -> listOf(
+                            "filmu" to "https://embed.filmu.in/tv/$tmdbId/$season/$episode",
+                            "cinezo" to "https://player.cinezo.live/embed/tv/$tmdbId/$season/$episode",
+                            "vidbolt" to "https://vidbolt.xyz/tv/$tmdbId/$season/$episode"
+                        )
+                        else -> listOf(
+                            "filmu" to "https://embed.filmu.in/movie/$tmdbId",
+                            "cinezo" to "https://player.cinezo.live/embed/movie/$tmdbId",
+                            "vidbolt" to "https://vidbolt.xyz/movie/$tmdbId"
+                        )
+                    }
                     coroutineScope {
                         for ((srvTag, embedUrl) in embeds) {
                             launch {
@@ -765,11 +959,18 @@ class BingrPlugin(
                                     for (sniffed in bRes.sniffedUrls) {
                                         if (sniffed.startsWith("http") && emittedKeys.add(sniffed)) {
                                             val isM3u8 = sniffed.contains(".m3u8")
-                                            val sourceId = "bingr:$srvTag:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
+                                            val sourceId = "bingr:$srvTag:${if (isAnime) animeId else tmdbId}:${if (isTv) "s${season}e$episode" else if (isAnime) "ep$episode" else "movie"}"
+                                            val sLabel = when (srvTag) {
+                                                "filmu" -> "Filmu Embed (Auto HLS)"
+                                                "cinezo" -> "Cinezo Dub Embed (Auto HLS)"
+                                                "cinezo_sub" -> "Cinezo Sub Embed (Auto HLS)"
+                                                "vidbolt" -> "Vidbolt Embed (Auto HLS)"
+                                                else -> "${srvTag.replaceFirstChar { it.uppercase() }} (Auto ${if (isM3u8) "HLS" else "MP4"})"
+                                            }
                                             val eupSource = EupStreamSource(
                                                 id = sourceId,
                                                 serverId = srvTag,
-                                                serverLabel = "${srvTag.replaceFirstChar { it.uppercase() }} (Auto ${if (isM3u8) "HLS" else "MP4"})",
+                                                serverLabel = sLabel,
                                                 url = sniffed,
                                                 kind = if (isM3u8) StreamKind.HLS else StreamKind.PROGRESSIVE,
                                                 headers = HeaderPolicy(sticky = mapOf("Referer" to embedUrl, "User-Agent" to defaultUa)),
@@ -952,14 +1153,14 @@ class BingrPlugin(
                 }
 
                 val (audioLang, audioIso, relType) = when {
-                    streamName.contains("Hindi", ignoreCase = true) -> Triple("Hindi", "hi", AudioReleaseType.DUB)
-                    streamName.contains("French", ignoreCase = true) -> Triple("French", "fr", AudioReleaseType.DUB)
-                    streamName.contains("Russian", ignoreCase = true) -> Triple("Russian", "ru", AudioReleaseType.DUB)
-                    streamName.contains("Latin", ignoreCase = true) -> Triple("Spanish (LatAm)", "es", AudioReleaseType.DUB)
-                    streamName.contains("Spanish", ignoreCase = true) -> Triple("Spanish", "es", AudioReleaseType.DUB)
-                    streamName.contains("Portuguese", ignoreCase = true) || streamName.contains("Brazilian", ignoreCase = true) -> Triple("Portuguese (Brazil)", "pt", AudioReleaseType.DUB)
-                    streamName.contains("Ukrainian", ignoreCase = true) -> Triple("Ukrainian", "uk", AudioReleaseType.DUB)
-                    else -> Triple("English", "en", AudioReleaseType.ORIGINAL)
+                    streamName.contains("Hindi", ignoreCase = true) -> Triple("Hindi Dub", "hi", AudioReleaseType.DUB)
+                    streamName.contains("French", ignoreCase = true) -> Triple("French Dub", "fr", AudioReleaseType.DUB)
+                    streamName.contains("Russian", ignoreCase = true) -> Triple("Russian Dub", "ru", AudioReleaseType.DUB)
+                    streamName.contains("Latin", ignoreCase = true) -> Triple("Spanish (LatAm) Dub", "es", AudioReleaseType.DUB)
+                    streamName.contains("Spanish", ignoreCase = true) -> Triple("Spanish Dub", "es", AudioReleaseType.DUB)
+                    streamName.contains("Portuguese", ignoreCase = true) || streamName.contains("Brazilian", ignoreCase = true) -> Triple("Brazilian Portuguese Dub", "pt", AudioReleaseType.DUB)
+                    streamName.contains("Ukrainian", ignoreCase = true) -> Triple("Ukrainian Dub", "uk", AudioReleaseType.DUB)
+                    else -> Triple("Original English", "en", AudioReleaseType.ORIGINAL)
                 }
 
                 val cleanServerTag = streamName.replace("Orion", "").replace("·", "").trim().ifBlank { "Original" }
@@ -989,12 +1190,13 @@ class BingrPlugin(
                     )
                 )
 
-                val displayServerName = "Vidrift Orion [$audioLang Dub] ($resolutionLabel ${if (isMp4) "Direct MP4" else "Master HLS"})"
+                val displayServerName = "Vidrift Orion - $audioLang"
+                val resLabel = if (isMp4) "$resolutionLabel Direct MP4" else resolutionLabel
 
                 val eupSource = EupStreamSource(
                     id = sourceId,
                     serverId = "orion_${cleanServerTag.filter { it.isLetterOrDigit() }.lowercase()}",
-                    serverLabel = displayServerName,
+                    serverLabel = "$displayServerName ($resLabel)",
                     url = streamUrl,
                     kind = if (isMp4) StreamKind.PROGRESSIVE else StreamKind.HLS,
                     headers = HeaderPolicy(sticky = headers),
@@ -1009,8 +1211,8 @@ class BingrPlugin(
                 val coreSource = CoreStreamSource(
                     url = streamUrl,
                     serverName = displayServerName,
-                    resolutionLabel = resolutionLabel,
-                    quality = "Bingr Vidrift $streamName [$resolutionLabel]",
+                    resolutionLabel = resLabel,
+                    quality = "Bingr Vidrift Orion - $audioLang",
                     isM3u8 = !isMp4,
                     audioTracks = coreAudio,
                     releaseType = relType,
@@ -1093,12 +1295,12 @@ class BingrPlugin(
                 )
             )
 
-            val displayServerName = "Vidy ${serverRegion.replaceFirstChar { it.uppercase() }} [$cleanResLabel Master HLS]"
+            val displayServerName = "Vidy ${serverRegion.replaceFirstChar { it.uppercase() }} (Fast CDN)"
 
             val eupSource = EupStreamSource(
                 id = sourceId,
                 serverId = "vidy_${serverRegion}_$qualityRaw",
-                serverLabel = displayServerName,
+                serverLabel = "$displayServerName ($cleanResLabel)",
                 url = streamUrl,
                 kind = StreamKind.HLS,
                 headers = HeaderPolicy(sticky = headers),
@@ -1330,16 +1532,37 @@ class BingrPlugin(
         val epItems = mutableListOf<EpisodeItem>()
         d.seasons.forEach { s ->
             s.episodes.forEach { ep ->
+                val epData = when {
+                    mediaItem.type == MediaType.ANIME -> "eup://bingr/anime/${mediaItem.id}/${ep.episodeNumber}"
+                    mediaItem.type == MediaType.TV_SERIES -> "eup://bingr/tv/$tmdbId/${s.seasonNumber}/${ep.episodeNumber}"
+                    else -> "eup://bingr/movie/$tmdbId"
+                }
                 epItems.add(
                     EpisodeItem(
                         id = "${mediaItem.id}:${s.seasonNumber}:${ep.episodeNumber}",
                         title = ep.title ?: "Episode ${ep.episodeNumber}",
                         seasonNumber = s.seasonNumber,
                         episodeNumber = ep.episodeNumber,
-                        data = "eup://bingr/${mediaItem.id}/${s.seasonNumber}/${ep.episodeNumber}"
+                        data = epData,
+                        thumbnail = ep.stillUrl,
+                        description = ep.overview
                     )
                 )
             }
+        }
+
+        if (epItems.isEmpty() && mediaItem.type == MediaType.MOVIE) {
+            epItems.add(
+                EpisodeItem(
+                    id = mediaItem.id,
+                    title = title,
+                    seasonNumber = 0,
+                    episodeNumber = 0,
+                    data = "eup://bingr/movie/$tmdbId",
+                    thumbnail = backdrop ?: poster,
+                    description = synopsis
+                )
+            )
         }
 
         MediaDetail(
@@ -1366,17 +1589,15 @@ class BingrPlugin(
         getStreamFlow(episodeData ?: mediaId)
 
     override fun getStreamFlow(episodeData: String): Flow<StreamEmission> = channelFlow {
-        val parts = episodeData.removePrefix("eup://bingr/").removePrefix("eup://").split("/")
-        val rawId = parts.getOrNull(parts.size - if (parts.size >= 3) 3 else 1)?.toIntOrNull()
-            ?: parts.firstOrNull()?.toIntOrNull()
-            ?: return@channelFlow
+        val parsed = parseTarget(episodeData)
+        val tmdbId = parsed.tmdbId.toIntOrNull() ?: 0
+        val isTv = parsed.isTv
+        val isAnime = parsed.isAnime
+        val season = parsed.season
+        val episode = parsed.episode
+        val animeId = parsed.animeId
 
-        val isTv = parts.size >= 3
-        val season = if (isTv) parts[parts.size - 2].toIntOrNull() else null
-        val episode = if (isTv) parts[parts.size - 1].toIntOrNull() else null
-
-        // If anime ID was passed, translate to TMDB ID if present in cache
-        val tmdbId = tmdbIdAnimeCache[rawId.toString()]?.toIntOrNull() ?: rawId
+        if (tmdbId <= 0 && !isAnime) return@channelFlow
 
         val emittedKeys = Collections.synchronizedSet(HashSet<String>())
         val defaultUa = eupHost?.defaultUserAgent ?: defaultUserAgent
@@ -1385,13 +1606,16 @@ class BingrPlugin(
         var introOffsetMs = 0L
 
         // 2. Fetch and Emit Subtitles (Native VDRK + OpenSubtitles v3)
-        val (_, coreSubs) = fetchCombinedSubtitles(tmdbId, isTv, season, episode, "")
-        for (sub in coreSubs) {
-            send(StreamEmission.SubtitleFound(sub))
+        if (tmdbId > 0) {
+            val (_, coreSubs) = fetchCombinedSubtitles(tmdbId, isTv, season, episode, "")
+            for (sub in coreSubs) {
+                send(StreamEmission.SubtitleFound(sub))
+            }
         }
 
         // 3. Cluster 1: Vidrift Orion Multi-Audio
         val vidriftJob = launch {
+            if (tmdbId <= 0) return@launch
             withTimeoutOrNull(4500L) {
                 try {
                     val vidriftUrl = if (isTv && season != null && episode != null) {
@@ -1425,6 +1649,7 @@ class BingrPlugin(
 
         // 4. Cluster 2: Vidy PRNG CDN Cipher
         val vidyJob = launch {
+            if (tmdbId <= 0) return@launch
             withTimeoutOrNull(4500L) {
                 try {
                     val seedUrl = "$vidyApiBaseUrl/seed?mediaId=$tmdbId"
@@ -1495,10 +1720,24 @@ class BingrPlugin(
         val webResolverJob = launch {
             legacyHost?.browserResolver?.let { resolver ->
                 withTimeoutOrNull(6000L) {
-                    val embeds = listOf(
-                        "filmu" to if (isTv && season != null && episode != null) "https://embed.filmu.in/tv/$tmdbId/$season/$episode" else "https://embed.filmu.in/movie/$tmdbId",
-                        "cinezo" to if (isTv && season != null && episode != null) "https://player.cinezo.live/embed/tv/$tmdbId/$season/$episode" else "https://player.cinezo.live/embed/movie/$tmdbId"
-                    )
+                    val embeds = when {
+                        isAnime -> listOf(
+                            "filmu" to "https://embed.filmu.in/anime/${animeId ?: tmdbId}/${episode ?: 1}",
+                            "cinezo" to "https://player.cinezo.live/embed/anime/${animeId ?: tmdbId}/${episode ?: 1}?dub=true",
+                            "cinezo_sub" to "https://player.cinezo.live/embed/anime/${animeId ?: tmdbId}/${episode ?: 1}",
+                            "vidbolt" to "https://vidbolt.xyz/anime/${animeId ?: tmdbId}/${episode ?: 1}"
+                        )
+                        isTv && season != null && episode != null -> listOf(
+                            "filmu" to "https://embed.filmu.in/tv/$tmdbId/$season/$episode",
+                            "cinezo" to "https://player.cinezo.live/embed/tv/$tmdbId/$season/$episode",
+                            "vidbolt" to "https://vidbolt.xyz/tv/$tmdbId/$season/$episode"
+                        )
+                        else -> listOf(
+                            "filmu" to "https://embed.filmu.in/movie/$tmdbId",
+                            "cinezo" to "https://player.cinezo.live/embed/movie/$tmdbId",
+                            "vidbolt" to "https://vidbolt.xyz/movie/$tmdbId"
+                        )
+                    }
                     coroutineScope {
                         for ((srvTag, embedUrl) in embeds) {
                             launch {
@@ -1514,9 +1753,16 @@ class BingrPlugin(
                                     for (sniffed in bRes.sniffedUrls) {
                                         if (sniffed.startsWith("http") && emittedKeys.add(sniffed)) {
                                             val isM3u8 = sniffed.contains(".m3u8")
+                                            val sName = when (srvTag) {
+                                                "filmu" -> "Filmu Embed (Auto HLS)"
+                                                "cinezo" -> "Cinezo Dub Embed (Auto HLS)"
+                                                "cinezo_sub" -> "Cinezo Sub Embed (Auto HLS)"
+                                                "vidbolt" -> "Vidbolt Embed (Auto HLS)"
+                                                else -> "${srvTag.replaceFirstChar { it.uppercase() }} (Auto ${if (isM3u8) "HLS" else "MP4"})"
+                                            }
                                             val coreSource = CoreStreamSource(
                                                 url = sniffed,
-                                                serverName = "${srvTag.replaceFirstChar { it.uppercase() }} (Auto ${if (isM3u8) "HLS" else "MP4"})",
+                                                serverName = sName,
                                                 resolutionLabel = "1080p FHD",
                                                 quality = "Bingr $srvTag [Auto]",
                                                 isM3u8 = isM3u8,
@@ -1540,18 +1786,13 @@ class BingrPlugin(
 
     // ───────────────────────────── Direct Download Link Resolver ─────────────────────────────
     override suspend fun getDownloadLinks(episodeData: String): List<DownloadOption> = withContext(Dispatchers.IO) {
-        val parts = episodeData.removePrefix("eup://bingr/").removePrefix("eup://").split("/")
-        val rawId = parts.getOrNull(parts.size - if (parts.size >= 3) 3 else 1)?.toIntOrNull()
-            ?: parts.firstOrNull()?.toIntOrNull()
-            ?: return@withContext emptyList()
+        val parsed = parseTarget(episodeData)
+        val tmdbId = parsed.tmdbId.toIntOrNull() ?: return@withContext emptyList()
+        val isTv = parsed.isTv || parsed.isAnime
+        val season = parsed.season ?: 1
+        val episode = parsed.episode ?: 1
 
-        val isTv = parts.size >= 3
-        val season = if (isTv) parts[parts.size - 2].toIntOrNull() else null
-        val episode = if (isTv) parts[parts.size - 1].toIntOrNull() else null
-
-        val tmdbId = tmdbIdAnimeCache[rawId.toString()]?.toIntOrNull() ?: rawId
-
-        val dlUrl = if (isTv && season != null && episode != null) {
+        val dlUrl = if (isTv) {
             "$downloadApiBaseUrl/tv/$tmdbId?season=$season&episode=$episode"
         } else {
             "$downloadApiBaseUrl/movie/$tmdbId"
@@ -1565,7 +1806,12 @@ class BingrPlugin(
                 .header("Referer", "https://bingr.one/")
                 .build()
 
-            val body = http.meta.newCall(req).execute().use { resp ->
+            val dlClient = http.meta.newBuilder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(15, TimeUnit.SECONDS)
+                .build()
+
+            val body = dlClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
             }
 
