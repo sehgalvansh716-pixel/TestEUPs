@@ -1,12 +1,12 @@
 package com.euthopiar.core.provider
 
+import com.euthopiar.core.browser.BrowserResolveRequest
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
@@ -18,14 +18,14 @@ import okhttp3.Request
 import java.net.InetAddress
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
 /**
  * EPorner Universal Plugin Provider.
  *
- * Utilizes the official EPorner JSON API and high-speed MP4 video CDNs to deliver
- * pristine 4K / 1080p / 720p full-length adult video scenes.
+ * Utilizes the official EPorner JSON API, the direct dynamic web player endpoint (/xhr/video/),
+ * and Headless WebResolver fallback to deliver 1080p / 720p full-length adult video scenes
+ * without requiring account authentication or redirects.
  *
  * Backed by automatic DNS-over-HTTPS (DoH) via [DohDns] with intelligent ISP unblock
  * route prioritization.
@@ -33,6 +33,14 @@ import java.util.regex.Pattern
 class EpornerPlugin(
     customClient: OkHttpClient? = null
 ) : UniversalPlugin {
+
+    private var hostApi: HostApi? = null
+
+    override fun init(host: HostApi) {
+        this.hostApi = host
+    }
+
+    private val relatedCache = ConcurrentHashMap<String, List<MediaItem>>()
 
     private val smartDns = object : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
@@ -93,7 +101,6 @@ class EpornerPlugin(
     private val defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
     private val dloadPattern = Pattern.compile("""href="(/dload/[^"]+)"""")
-    private val contentUrlPattern = Pattern.compile(""""contentUrl":\s*"([^"]+)"""")
 
     override suspend fun getHomeCatalog(): List<CatalogRow> = withContext(Dispatchers.IO) {
         val rows = mutableListOf<CatalogRow>()
@@ -104,22 +111,22 @@ class EpornerPlugin(
             val desiDeferred = async { fetchApiVideos(query = "desi", order = "top-weekly", count = 16) }
             val amateurDeferred = async { fetchApiVideos(query = "amateur", order = "top-weekly", count = 16) }
 
-            val topWeekly = topWeeklyDeferred.await()
+            val topWeekly = try { topWeeklyDeferred.await() } catch (_: Throwable) { emptyList() }
             if (topWeekly.isNotEmpty()) {
                 rows.add(CatalogRow(title = "Weekly Top Rated", items = topWeekly))
             }
 
-            val fourK = fourKDeferred.await()
+            val fourK = try { fourKDeferred.await() } catch (_: Throwable) { emptyList() }
             if (fourK.isNotEmpty()) {
                 rows.add(CatalogRow(title = "4K Ultra HD Masterpieces", items = fourK))
             }
 
-            val desi = desiDeferred.await()
+            val desi = try { desiDeferred.await() } catch (_: Throwable) { emptyList() }
             if (desi.isNotEmpty()) {
                 rows.add(CatalogRow(title = "Desi & Asian Exclusive", items = desi))
             }
 
-            val amateur = amateurDeferred.await()
+            val amateur = try { amateurDeferred.await() } catch (_: Throwable) { emptyList() }
             if (amateur.isNotEmpty()) {
                 rows.add(CatalogRow(title = "Amateur & Homemade", items = amateur))
             }
@@ -129,7 +136,41 @@ class EpornerPlugin(
     }
 
     override suspend fun search(query: String): List<MediaItem> = withContext(Dispatchers.IO) {
-        fetchApiVideos(query = query, order = "top-weekly", count = 24)
+        val cleanQuery = query.trim()
+        if (cleanQuery.isBlank()) {
+            return@withContext fetchApiVideos(query = "", order = "top-weekly", count = 24)
+        }
+
+        // 1. Direct hit in related cache (for instant recommendation load)
+        if (relatedCache.containsKey(cleanQuery)) {
+            val cached = relatedCache[cleanQuery]
+            if (!cached.isNullOrEmpty()) return@withContext cached
+        }
+
+        // 2. Perform official API search
+        var results = fetchApiVideos(query = cleanQuery, order = "top-weekly", count = 24)
+
+        // 3. Fallback for long multi-word scene titles
+        if (results.isEmpty() && cleanQuery.contains(" ")) {
+            val keywords = cleanQuery.split(Regex("""\s+"""))
+                .filter { it.length >= 4 && !it.startsWith("http", ignoreCase = true) }
+                .take(2)
+                .joinToString(" ")
+            if (keywords.isNotBlank()) {
+                results = fetchApiVideos(query = keywords, order = "top-weekly", count = 24)
+            }
+        }
+
+        // 4. Recommendation guarantee: fall back to cached items or top-weekly if still empty
+        if (results.isEmpty()) {
+            val anyCached = relatedCache.values.flatten().distinctBy { it.id }.take(16)
+            if (anyCached.isNotEmpty()) {
+                return@withContext anyCached
+            }
+            results = fetchApiVideos(query = "", order = "top-weekly", count = 24)
+        }
+
+        results
     }
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
@@ -153,7 +194,7 @@ class EpornerPlugin(
                 resolvedTitle = titleMatcher.group(1)?.replace(Regex("<[^>]+>"), "")?.trim() ?: resolvedTitle
             }
 
-            // Extract tags
+            // Extract tags/genres
             val tagMatcher = Pattern.compile("""href="/cat/([^/"]+)"""").matcher(html)
             while (tagMatcher.find()) {
                 val tag = tagMatcher.group(1)?.replace("-", " ")
@@ -163,58 +204,81 @@ class EpornerPlugin(
                 }
             }
 
-            // Extract direct download redirect URLs for all available qualities
-            val dloadMatcher = dloadPattern.matcher(html)
-            val dloadPaths = mutableListOf<String>()
-            while (dloadMatcher.find()) {
-                val path = dloadMatcher.group(1)
-                if (!path.isNullOrBlank() && path !in dloadPaths) {
-                    dloadPaths.add(path)
-                }
+            // Extract real related videos from page HTML and cache them for recommendations
+            val relatedFromPage = parseRelatedVideosFromHtml(html)
+            if (relatedFromPage.isNotEmpty()) {
+                relatedCache[videoId] = relatedFromPage
+                relatedCache[mediaItem.id] = relatedFromPage
+                genres.firstOrNull()?.let { relatedCache[it] = relatedFromPage }
             }
 
-            // Prioritize standard MP4 over AV1 since standard MP4 is hardware decoded on all Android devices
-            val standardPaths = dloadPaths.filterNot { it.contains("-av1", ignoreCase = true) }
-            val candidatePaths = if (standardPaths.isNotEmpty()) standardPaths else dloadPaths
+            // Primary Stream Resolution Strategy: Official Web Player JSON endpoint (/xhr/video/)
+            val vidMatcher = Pattern.compile("""EP\.video\.player\.vid\s*=\s*['"]([^'"]+)['"]""").matcher(html)
+            val hashMatcher = Pattern.compile("""EP\.video\.player\.hash\s*=\s*['"]([^'"]+)['"]""").matcher(html)
+            val extractedVid = if (vidMatcher.find()) vidMatcher.group(1) else videoId
+            val extractedHash = if (hashMatcher.find()) hashMatcher.group(1) else null
 
-            // Sort candidate paths descending by resolution (1080p -> 720p -> 480p -> 360p -> 240p)
-            val qualityOrder = mapOf("1080p" to 1, "720p" to 2, "480p" to 3, "360p" to 4, "240p" to 5)
-            val sortedCandidates = candidatePaths.sortedBy { path ->
-                when {
-                    path.contains("1080") -> 1
-                    path.contains("720") -> 2
-                    path.contains("480") -> 3
-                    path.contains("360") -> 4
-                    path.contains("240") -> 5
-                    else -> 99
-                }
+            var resolvedQualities: List<Pair<String, String>> = emptyList()
+
+            if (!extractedHash.isNullOrBlank()) {
+                resolvedQualities = fetchXhrVideoSources(extractedVid, extractedHash, videoPageUrl)
             }
 
-            // Resolve available quality links in parallel safely with supervisorScope
-            val resolvedEpisodes = supervisorScope {
-                sortedCandidates.map { path ->
-                    async {
-                        try {
-                            val qualityLabel = when {
-                                path.contains("1080") -> "1080p"
-                                path.contains("720") -> "720p"
-                                path.contains("480") -> "480p"
-                                path.contains("360") -> "360p"
-                                path.contains("240") -> "240p"
-                                else -> "HD"
-                            }
-                            val resolved = resolveDloadRedirect("$mainUrl$path")
-                            if (!resolved.isNullOrBlank()) {
-                                qualityLabel to resolved
-                            } else null
-                        } catch (_: Throwable) {
-                            null
-                        }
+            // Secondary Fallback: Headless WebResolver (sniffing / DOM evaluation)
+            if (resolvedQualities.isEmpty() && hostApi?.browserResolver != null) {
+                resolvedQualities = resolveViaWebResolver(videoPageUrl)
+            }
+
+            // Tertiary Fallback: /dload/ redirects (filtering out /login redirects)
+            if (resolvedQualities.isEmpty()) {
+                val dloadMatcher = dloadPattern.matcher(html)
+                val dloadPaths = mutableListOf<String>()
+                while (dloadMatcher.find()) {
+                    val path = dloadMatcher.group(1)
+                    if (!path.isNullOrBlank() && path !in dloadPaths) {
+                        dloadPaths.add(path)
                     }
-                }.awaitAll().filterNotNull()
+                }
+                val standardPaths = dloadPaths.filterNot { it.contains("-av1", ignoreCase = true) }
+                val candidatePaths = if (standardPaths.isNotEmpty()) standardPaths else dloadPaths
+                val qualityOrder = mapOf("1080p" to 1, "720p" to 2, "480p" to 3, "360p" to 4, "240p" to 5)
+                val sortedCandidates = candidatePaths.sortedBy { path ->
+                    when {
+                        path.contains("1080") -> 1
+                        path.contains("720") -> 2
+                        path.contains("480") -> 3
+                        path.contains("360") -> 4
+                        path.contains("240") -> 5
+                        else -> 99
+                    }
+                }
+
+                resolvedQualities = supervisorScope {
+                    sortedCandidates.map { path ->
+                        async {
+                            try {
+                                val qualityLabel = when {
+                                    path.contains("1080") -> "1080p"
+                                    path.contains("720") -> "720p"
+                                    path.contains("480") -> "480p"
+                                    path.contains("360") -> "360p"
+                                    path.contains("240") -> "240p"
+                                    else -> "HD"
+                                }
+                                val resolved = resolveDloadRedirect("$mainUrl$path")
+                                if (!resolved.isNullOrBlank()) {
+                                    qualityLabel to resolved
+                                } else null
+                            } catch (_: Throwable) {
+                                null
+                            }
+                        }
+                    }.awaitAll().filterNotNull()
+                }
             }
 
-            val sortedEpisodes = resolvedEpisodes
+            val qualityOrder = mapOf("1080p" to 1, "720p" to 2, "480p" to 3, "360p" to 4, "240p" to 5)
+            val sortedEpisodes = resolvedQualities
                 .distinctBy { it.first }
                 .sortedBy { qualityOrder[it.first] ?: 99 }
                 .mapIndexed { index, (qualityLabel, streamLink) ->
@@ -229,11 +293,7 @@ class EpornerPlugin(
                     )
                 }
 
-            episodes = if (sortedEpisodes.isNotEmpty()) {
-                sortedEpisodes
-            } else {
-                emptyList()
-            }
+            episodes = sortedEpisodes
         }
 
         MediaDetail(
@@ -245,7 +305,7 @@ class EpornerPlugin(
             type = MediaType.MOVIE,
             year = 2026,
             synopsis = "Full-length Ultra HD scene from EPorner.",
-            genres = genres.take(10),
+            genres = genres.ifEmpty { listOf("Popular", "4K Ultra HD") }.take(10),
             duration = duration,
             episodes = episodes,
             rating = mediaItem.rating,
@@ -310,10 +370,157 @@ class EpornerPlugin(
     }
 
     /**
-     * Fetches videos belonging to a category or search query via EPorner API.
+     * Encodes 32-character hexadecimal player hash into the Base36 format expected by /xhr/video/.
      */
-    suspend fun getCategoryVideos(slug: String, sort: String = "top-weekly", page: Int = 1): List<MediaItem> = withContext(Dispatchers.IO) {
-        fetchApiVideos(query = slug, order = sort, page = page, count = 24)
+    private fun encodeHash(hash: String): String? {
+        if (hash.length != 32) return null
+        return try {
+            val h1 = hash.substring(0, 8).toLong(16).toString(36)
+            val h2 = hash.substring(8, 16).toLong(16).toString(36)
+            val h3 = hash.substring(16, 24).toLong(16).toString(36)
+            val h4 = hash.substring(24, 32).toLong(16).toString(36)
+            "$h1$h2$h3$h4"
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * Queries the official dynamic player endpoint (/xhr/video/) to retrieve direct,
+     * high-speed signed CDN MP4 streams without login gates.
+     */
+    private fun fetchXhrVideoSources(vid: String, hash: String, referer: String): List<Pair<String, String>> {
+        val encodedHash = encodeHash(hash) ?: return emptyList()
+        val url = "$mainUrl/xhr/video/$vid?hash=$encodedHash&domain=www.eporner.com&fallback=false&supportedFormats=mp4&_=${System.currentTimeMillis()}"
+        try {
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", defaultUserAgent)
+                .header("Referer", referer)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .header("Accept", "application/json, text/javascript, */*; q=0.01")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: return emptyList()
+                    val json = JSONObject(body)
+                    val sources = json.optJSONObject("sources")?.optJSONObject("mp4") ?: return emptyList()
+                    val result = mutableListOf<Pair<String, String>>()
+                    val keys = sources.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        val obj = sources.optJSONObject(key) ?: continue
+                        val src = obj.optString("src")
+                        val labelShort = obj.optString("labelShort", key)
+                        if (src.isNotBlank() && (src.startsWith("http://") || src.startsWith("https://"))) {
+                            val q = when {
+                                labelShort.contains("1080") || key.contains("1080") -> "1080p"
+                                labelShort.contains("720") || key.contains("720") -> "720p"
+                                labelShort.contains("480") || key.contains("480") -> "480p"
+                                labelShort.contains("360") || key.contains("360") -> "360p"
+                                labelShort.contains("240") || key.contains("240") -> "240p"
+                                else -> labelShort
+                            }
+                            result.add(q to src.substringBefore("?dload="))
+                        }
+                    }
+                    return result
+                }
+            }
+        } catch (_: Throwable) {}
+        return emptyList()
+    }
+
+    /**
+     * Resolves the video stream via the Host Application's Headless WebResolver.
+     */
+    private suspend fun resolveViaWebResolver(url: String): List<Pair<String, String>> {
+        val resolver = hostApi?.browserResolver ?: return emptyList()
+        return try {
+            val req = BrowserResolveRequest(
+                url = url,
+                timeoutMs = 15000L,
+                urlSniffRegex = Regex(""".*(\.mp4|/xhr/video/).*"""),
+                evaluateJsAfterLoad = """
+                    (function() {
+                        try {
+                            var vid = (window.EP && EP.video && EP.video.player && EP.video.player.vid) || '';
+                            var hash = (window.EP && EP.video && EP.video.player && EP.video.player.hash) || '';
+                            return JSON.stringify({ vid: vid, hash: hash });
+                        } catch(e) { return ''; }
+                    })()
+                """.trimIndent()
+            )
+            val res = resolver.resolve(req)
+            val result = mutableListOf<Pair<String, String>>()
+
+            val mp4Urls = res.sniffedUrls.filter { it.contains(".mp4") && !it.contains("/login") }
+            for (mp4 in mp4Urls) {
+                val q = when {
+                    mp4.contains("1080") -> "1080p"
+                    mp4.contains("720") -> "720p"
+                    mp4.contains("480") -> "480p"
+                    mp4.contains("360") -> "360p"
+                    mp4.contains("240") -> "240p"
+                    else -> "HD"
+                }
+                result.add(q to mp4.substringBefore("?dload="))
+            }
+
+            if (result.isNotEmpty()) return result
+
+            if (!res.jsResult.isNullOrBlank()) {
+                try {
+                    val jsObj = JSONObject(res.jsResult)
+                    val v = jsObj.optString("vid")
+                    val h = jsObj.optString("hash")
+                    if (v.isNotBlank() && h.isNotBlank()) {
+                        val sources = fetchXhrVideoSources(v, h, url)
+                        if (sources.isNotEmpty()) return sources
+                    }
+                } catch (_: Throwable) {}
+            }
+
+            emptyList()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Extracts related video cards directly from the HTML page for immediate recommendations.
+     */
+    private fun parseRelatedVideosFromHtml(html: String): List<MediaItem> {
+        val items = mutableListOf<MediaItem>()
+        try {
+            val cardPattern = Pattern.compile(
+                """href="(/video-([^"/]+)/[^"]*)".*?(?:data-src|src)="([^"]+\.(?:jpg|png|webp)[^"]*)".*?alt="([^"]*)"""",
+                Pattern.DOTALL
+            )
+            val matcher = cardPattern.matcher(html)
+            while (matcher.find()) {
+                val pagePath = matcher.group(1) ?: continue
+                val vid = matcher.group(2) ?: continue
+                val thumb = matcher.group(3)
+                val title = matcher.group(4)?.trim() ?: ""
+                if (vid.isNotBlank() && title.isNotBlank() && !thumb.isNullOrBlank() && !thumb.contains("data:image")) {
+                    items.add(
+                        MediaItem(
+                            id = vid,
+                            title = title,
+                            url = "$mainUrl$pagePath",
+                            posterUrl = thumb,
+                            backdropUrl = thumb,
+                            type = MediaType.MOVIE,
+                            quality = if (title.contains("4k", ignoreCase = true)) "4K" else "1080p",
+                            rating = "15:00",
+                            provider = name
+                        )
+                    )
+                }
+            }
+        } catch (_: Throwable) {}
+        return items.distinctBy { it.id }
     }
 
     private fun fetchApiVideos(query: String, order: String = "top-weekly", page: Int = 1, count: Int = 20): List<MediaItem> {
@@ -333,7 +540,7 @@ class EpornerPlugin(
                     }
                 }
             }
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         return emptyList()
     }
 
@@ -368,7 +575,7 @@ class EpornerPlugin(
                 }
             }
             items
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             emptyList()
         }
     }
@@ -395,7 +602,7 @@ class EpornerPlugin(
                 }
                 fullUrl.substringBefore("?dload=")
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             null
         }
     }
@@ -410,7 +617,7 @@ class EpornerPlugin(
             client.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) resp.body?.string() else null
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             null
         }
     }
