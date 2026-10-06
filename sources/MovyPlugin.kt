@@ -1362,7 +1362,7 @@ class MovyPlugin(
             backdropUrl = backdropUrl,
             type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
             year = year,
-            synopsis = overview,
+            synopsis = if (!overview.isNullOrBlank()) overview else "$title is available to stream on Movy.",
             genres = genres,
             duration = duration,
             episodes = allEpisodes,
