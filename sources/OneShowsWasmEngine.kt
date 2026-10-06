@@ -43,11 +43,7 @@ object OneShowsWasmEngine {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     private fun safeLog(tag: String, message: String, t: Throwable? = null) {
-        try {
-            if (t != null) android.util.Log.w(tag, message, t) else android.util.Log.w(tag, message)
-        } catch (_: Throwable) {
-            System.err.println("[$tag] $message" + (t?.let { ": ${it.message}" } ?: ""))
-        }
+        System.err.println("[$tag] $message" + (t?.let { ": ${it.message}" } ?: ""))
     }
 
     private fun hexToBytes(hex: String): ByteArray {
