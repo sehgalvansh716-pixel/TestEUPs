@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "378e1aa9bad2cbc519374d0106a2bb8a653a3164b2218754c599539e97b18bd2",
+      "sha256": "08028d85488643e95882b75348205e7bab921335dbd8f8968d386437b5bfaa31",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -38,7 +38,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "78f073cbcd0982be18a0388bf0cef31aaaffea79edbd0a5b22abe6b929dd63e4",
+      "sha256": "de1b7b0536bbcba70ef43344b1eacc1f1d3fe525a4da0cdc46c1dc3cf8017624",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -52,23 +52,23 @@
     {
       "id": "1shows",
       "name": "1Shows",
-      "version": 5,
-      "versionName": "1.4.0",
+      "version": 6,
+      "versionName": "1.5.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://www.1shows.org",
-      "description": "High-speed multi-server streaming with Vidrock AES-256-GCM, Vidy PRNG, Viduki, and MakimaDL direct CDN streams & downloads (Decoupled EUP).",
+      "description": "High-speed multi-server streaming with Vidrock, Vidy, Viduki Main (Hindi/English/Vietnamese), Viduki Premium Embeds (Plasma Multi-Audio HLS), Vidzee, VidFast, VidLink Pro & MakimaDL direct CDN (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.OneShowsPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "10524ee95955c9f6f1d75ba16b47c175bd1555ad53ad4bccdaa330260ab31111",
+      "sha256": "a09f0686ddf37434d84b0f0022bca261efc1cde2f29dab0b0a8b1103a9f495d1",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 100224,
+      "fileSize": 121886,
       "isAdult": false,
       "isVault": false
     },
@@ -84,7 +84,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "c502c62077ff4c55018323feed9706db4b72aac07cdbb6c54f593ad4c3ce2aaa",
+      "sha256": "3182603a2b33e86e5108b265edef5a50abc61415c81d0150bf992318a524c725",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -107,7 +107,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/hqporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "1f9445820f7d2155d9082e171fe8fcea970a092da4b6fd24992b3849bc85db17",
+      "sha256": "0f43fd488877fb7b8ec4fef851a454eee39b5abf4e6e87133cae37fa3c2e1671",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -128,7 +128,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/xvideos.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "068561b72c2ad97be396acae26dc2cc6a7a91a5622f498a3e9d0ef1fb823fe68",
+      "sha256": "4cb10e92c2c5d8c045d08e28b0ff1668dbb467bffa73ca75e18454719a341c96",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -149,7 +149,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/eporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "05094c2d3de9bf37a5b24fcf1aca1badec6a0217e96ee4bf70d852d4aab8793a",
+      "sha256": "af76033aba493438e4473101890be30464482b3530cd8ffae32465803c4ad3a0",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -170,7 +170,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/rule34video.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "62a0c1509e6963a039663df8fb8701344f9c36dc3587341efe1263764e490401",
+      "sha256": "cddb495a7547d247df73db4cb5ed3fcb410478e44284491cf9ab9fe72d615fb8",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -191,7 +191,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/beeg.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "e9c793e8bd70e39a67d2ae35769e9d9ce903d0a26235c4cdfa9350d93636a544",
+      "sha256": "30918586de89daed58924735e4a31ebcd9c2a47a1ddc13133f080f44b873e7b6",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -212,7 +212,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/faphouse.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "77a1988d9056c6ac759b924ebee0eca56b7a984114b5f002f87ae3f77aecfe54",
+      "sha256": "895d80a2c8b33ba07afb462a8ade504a97a4fb132d255eeea5e99547d2d08e7b",
       "isEup": true,
       "supportedTypes": [
         "ADULT"

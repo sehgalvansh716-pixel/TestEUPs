@@ -911,6 +911,363 @@ class OneShowsPlugin(
                 }
             }
         }
+
+        // 7. Server Group 4: Viduki Main Multi-Server HLS Streaming (Chris/Wesker/Grace HINDI, Leon/Jill/Ada ENGLISH, Ashley VIETNAMESE)
+        launch {
+            withTimeoutOrNull(4500L) {
+                try {
+                    val vidukiServers = OneShowsWasmEngine.fetchVidukiServers(http.meta)
+                    val priorityServers = vidukiServers.filter {
+                        it.language.equals("HINDI", ignoreCase = true) ||
+                        listOf("Leon", "Jill", "Ada", "Sherry", "Chris", "Wesker", "Grace", "Ashley").contains(it.name)
+                    }
+                    coroutineScope {
+                        for (srv in priorityServers) {
+                            launch {
+                                withTimeoutOrNull(3500L) {
+                                    try {
+                                        val srvStreamUrl = OneShowsWasmEngine.requestVidukiStream(
+                                            http.meta,
+                                            srv.name,
+                                            isTv,
+                                            tmdbId,
+                                            season ?: 1,
+                                            episode ?: 1
+                                        )
+                                        if (!srvStreamUrl.isNullOrBlank() && srvStreamUrl.startsWith("http")) {
+                                            val srvLang = when (srv.language.uppercase()) {
+                                                "HINDI" -> "Hindi"
+                                                "VIETNAM" -> "Vietnamese"
+                                                else -> "English"
+                                            }
+                                            val iso = when (srvLang.lowercase()) {
+                                                "hindi" -> "hi"
+                                                "vietnamese" -> "vi"
+                                                else -> "en"
+                                            }
+                                            val relType = when {
+                                                srvLang.equals("hindi", ignoreCase = true) -> AudioReleaseType.DUB
+                                                srvLang.equals("english", ignoreCase = true) -> AudioReleaseType.ORIGINAL
+                                                else -> AudioReleaseType.DUB
+                                            }
+                                            val audioTracks = listOf(
+                                                CoreAudioTrackDescriptor(
+                                                    languageName = srvLang,
+                                                    isoCode = iso,
+                                                    channels = 2,
+                                                    codec = "AAC"
+                                                )
+                                            )
+                                            val eupAudio = listOf(
+                                                EupAudioTrackDescriptor(
+                                                    label = "$srvLang (2ch AAC)",
+                                                    language = iso,
+                                                    isDefault = iso == "hi" || (iso == "en" && !srv.language.equals("HINDI", true)),
+                                                    codec = "aac",
+                                                    channelCount = 2
+                                                )
+                                            )
+                                            val reqHeaders = mapOf(
+                                                "Referer" to "https://www.viduki.net/",
+                                                "Origin" to "https://www.viduki.net",
+                                                "User-Agent" to defaultHeaders["User-Agent"]!!
+                                            )
+                                            val sourceId = "1shows:viduki:$tmdbId:${srv.name.lowercase()}"
+                                            val eupSource = EupStreamSource(
+                                                id = sourceId,
+                                                serverId = "viduki_${srv.name.lowercase()}",
+                                                serverLabel = "Viduki ${srv.name} [$srvLang] (1080p Master HLS)",
+                                                url = srvStreamUrl,
+                                                kind = StreamKind.HLS,
+                                                headers = HeaderPolicy(sticky = reqHeaders),
+                                                video = VideoInfo(height = 1080),
+                                                audioTracks = eupAudio,
+                                                introOffsetMs = introOffsetMs,
+                                                expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
+                                                refreshHandle = "v1|1|viduki_${srv.name.lowercase()}"
+                                            )
+                                            sourceEntries[sourceId] = CachedSourceEntry(
+                                                tmdbId = tmdbId,
+                                                isTv = isTv,
+                                                season = season,
+                                                episode = episode,
+                                                serverId = srv.name,
+                                                gen = 1,
+                                                realUrl = srvStreamUrl,
+                                                realSource = eupSource,
+                                                expiresAtMs = System.currentTimeMillis() + (30 * 60_000L)
+                                            )
+                                            val legacySource = CoreStreamSource(
+                                                url = srvStreamUrl,
+                                                serverName = "Viduki (${srv.name} - $srvLang)",
+                                                resolutionLabel = "1080p FHD",
+                                                quality = "1Shows Viduki ${srv.name} [1080p FHD - $srvLang]",
+                                                isM3u8 = true,
+                                                audioTracks = audioTracks,
+                                                releaseType = relType,
+                                                headers = reqHeaders
+                                            )
+                                            if (emittedStreamKeys.add(srvStreamUrl)) {
+                                                send(StreamEmission.SourceFound(legacySource))
+                                            }
+                                        }
+                                    } catch (ce: CancellationException) {
+                                        throw ce
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    safeLog("OneShowsPlugin", "Viduki Main stream resolution error: ${t.message}", t)
+                }
+            }
+        }
+
+        // 8. Server Group 5: Viduki Premium Embeds (Plasma Multi-Audio HLS [Hindi + English] & Dexter)
+        launch {
+            withTimeoutOrNull(4500L) {
+                try {
+                    val premJsonStr = OneShowsWasmEngine.requestVidukiPremiumEmbeds(
+                        http.meta,
+                        isTv,
+                        tmdbId,
+                        season ?: 1,
+                        episode ?: 1
+                    )
+                    if (!premJsonStr.isNullOrBlank() && premJsonStr.contains("links")) {
+                        val premObj = json.parseToJsonElement(premJsonStr).jsonObject
+                        val linksArr = premObj["links"]?.jsonArray
+                        if (linksArr != null) {
+                            for (item in linksArr) {
+                                val linkObj = item.jsonObject
+                                val host = linkObj["host"]?.jsonPrimitive?.contentOrNull ?: ""
+                                val linkUrl = linkObj["url"]?.jsonPrimitive?.contentOrNull ?: ""
+                                if (linkUrl.isBlank()) continue
+
+                                if (host.equals("plasma", ignoreCase = true)) {
+                                    try {
+                                        val plasmaReq = Request.Builder()
+                                            .url(linkUrl)
+                                            .header("Referer", "https://www.viduki.net/")
+                                            .header("User-Agent", defaultHeaders["User-Agent"]!!)
+                                            .build()
+                                        val plasmaHtml = http.meta.newCall(plasmaReq).execute().use { it.body?.string().orEmpty() }
+                                        val iframeMatch = Regex("""iframe\s+id=['"]playerFrame['"][^>]*src=['"]([^'"]+)['"]""").find(plasmaHtml)
+                                        if (iframeMatch != null) {
+                                            val relProxy = iframeMatch.groupValues[1].replace("&amp;", "&")
+                                            val proxyUrl = if (relProxy.startsWith("http")) relProxy else "https://cineverse.modiplay.xyz$relProxy"
+                                            val proxyReq = Request.Builder()
+                                                .url(proxyUrl)
+                                                .header("Referer", linkUrl)
+                                                .header("User-Agent", defaultHeaders["User-Agent"]!!)
+                                                .build()
+                                            val proxyHtml = http.meta.newCall(proxyReq).execute().use { it.body?.string().orEmpty() }
+                                            val directMatch = Regex("""var\s+directSrc\s*=\s*['"]([^'"]+)['"]""").find(proxyHtml)
+                                            if (directMatch != null) {
+                                                val directHls = directMatch.groupValues[1].replace("\\/", "/")
+                                                if (directHls.startsWith("http")) {
+                                                    val plasmaAudio = listOf(
+                                                        CoreAudioTrackDescriptor("Hindi", "hi", 2, "AAC"),
+                                                        CoreAudioTrackDescriptor("English", "en", 2, "AAC")
+                                                    )
+                                                    val eupPlasmaAudio = listOf(
+                                                        EupAudioTrackDescriptor("Hindi (Default)", "hi", true, "aac", 2),
+                                                        EupAudioTrackDescriptor("English", "en", false, "aac", 2)
+                                                    )
+                                                    val plasmaHeaders = mapOf(
+                                                        "Referer" to "https://cineverse.modiplay.xyz/",
+                                                        "User-Agent" to defaultHeaders["User-Agent"]!!
+                                                    )
+                                                    val sourceId = "1shows:viduki:plasma:$tmdbId"
+                                                    val eupSource = EupStreamSource(
+                                                        id = sourceId,
+                                                        serverId = "viduki_plasma",
+                                                        serverLabel = "Viduki Plasma [Multi-Audio HLS (Hindi + English)]",
+                                                        url = directHls,
+                                                        kind = StreamKind.HLS,
+                                                        headers = HeaderPolicy(sticky = plasmaHeaders),
+                                                        video = VideoInfo(height = 1080),
+                                                        audioTracks = eupPlasmaAudio,
+                                                        introOffsetMs = introOffsetMs,
+                                                        expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
+                                                        refreshHandle = "v1|1|viduki_plasma"
+                                                    )
+                                                    sourceEntries[sourceId] = CachedSourceEntry(
+                                                        tmdbId = tmdbId,
+                                                        isTv = isTv,
+                                                        season = season,
+                                                        episode = episode,
+                                                        serverId = "plasma",
+                                                        gen = 1,
+                                                        realUrl = directHls,
+                                                        realSource = eupSource,
+                                                        expiresAtMs = System.currentTimeMillis() + (30 * 60_000L)
+                                                    )
+                                                    val legSource = CoreStreamSource(
+                                                        url = directHls,
+                                                        serverName = "Viduki Plasma (Multi-Audio HLS)",
+                                                        resolutionLabel = "1080p FHD",
+                                                        quality = "1Shows Viduki Plasma [1080p Multi-Audio HLS (Hindi + English)]",
+                                                        isM3u8 = true,
+                                                        audioTracks = plasmaAudio,
+                                                        releaseType = AudioReleaseType.DUAL_AUDIO,
+                                                        headers = plasmaHeaders
+                                                    )
+                                                    if (emittedStreamKeys.add(directHls)) {
+                                                        send(StreamEmission.SourceFound(legSource))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch (ce: CancellationException) {
+                                        throw ce
+                                    } catch (_: Throwable) {}
+                                } else if (host.equals("dexter", ignoreCase = true)) {
+                                    val reqHeaders = mapOf(
+                                        "Referer" to "https://www.viduki.net/",
+                                        "User-Agent" to defaultHeaders["User-Agent"]!!
+                                    )
+                                    val legSource = CoreStreamSource(
+                                        url = linkUrl,
+                                        serverName = "Viduki Dexter (Web Embed)",
+                                        resolutionLabel = "1080p FHD",
+                                        quality = "1Shows Viduki Dexter [Web Embed]",
+                                        isM3u8 = false,
+                                        audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
+                                        releaseType = AudioReleaseType.ORIGINAL,
+                                        headers = reqHeaders
+                                    )
+                                    if (emittedStreamKeys.add(linkUrl)) {
+                                        send(StreamEmission.SourceFound(legSource))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    safeLog("OneShowsPlugin", "Viduki Premium Embeds resolution error: ${t.message}", t)
+                }
+            }
+        }
+
+        // 9. Server Group 6: Vidzee Embed & VidSrc Multi-Host Embeds
+        launch {
+            try {
+                val vidzeeEmbedUrl = if (isTv && season != null && episode != null) {
+                    "https://player.vidzee.wtf/embed/tv/$tmdbId/$season/$episode?color=0278fd"
+                } else {
+                    "https://player.vidzee.wtf/embed/movie/$tmdbId?color=0278fd"
+                }
+                val vidsrcEmbedUrl = if (isTv && season != null && episode != null) {
+                    "https://vidsrc-embed.ru/embed/tv?tmdb=$tmdbId&season=$season&episode=$episode"
+                } else {
+                    "https://vidsrc-embed.ru/embed/movie/$tmdbId"
+                }
+                val vzHeaders = mapOf("Referer" to "https://www.1shows.org/", "User-Agent" to defaultHeaders["User-Agent"]!!)
+                val vzSource = CoreStreamSource(
+                    url = vidzeeEmbedUrl,
+                    serverName = "Vidzee (Embed Player)",
+                    resolutionLabel = "1080p FHD",
+                    quality = "1Shows Vidzee Player [1080p FHD]",
+                    isM3u8 = false,
+                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
+                    releaseType = AudioReleaseType.ORIGINAL,
+                    headers = vzHeaders
+                )
+                if (emittedStreamKeys.add(vidzeeEmbedUrl)) {
+                    send(StreamEmission.SourceFound(vzSource))
+                }
+                val vsSource = CoreStreamSource(
+                    url = vidsrcEmbedUrl,
+                    serverName = "VidSrc (Multi-Host Embed)",
+                    resolutionLabel = "1080p FHD",
+                    quality = "1Shows VidSrc Player [1080p FHD]",
+                    isM3u8 = false,
+                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
+                    releaseType = AudioReleaseType.ORIGINAL,
+                    headers = vzHeaders
+                )
+                if (emittedStreamKeys.add(vidsrcEmbedUrl)) {
+                    send(StreamEmission.SourceFound(vsSource))
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 10. Server Group 7: VidFast & VidLink Pro Embeds
+        launch {
+            try {
+                val vidFastUrl = if (isTv && season != null && episode != null) {
+                    "https://vidfast.pro/tv/$tmdbId/$season/$episode"
+                } else {
+                    "https://vidfast.pro/movie/$tmdbId"
+                }
+                val vidLinkUrl = if (isTv && season != null && episode != null) {
+                    "https://vidlink.pro/tv/$tmdbId/$season/$episode"
+                } else {
+                    "https://vidlink.pro/movie/$tmdbId"
+                }
+                val vfHeaders = mapOf("Referer" to "https://www.1shows.org/", "User-Agent" to defaultHeaders["User-Agent"]!!)
+                val vfSource = CoreStreamSource(
+                    url = vidFastUrl,
+                    serverName = "VidFast (Embed Player)",
+                    resolutionLabel = "1080p FHD",
+                    quality = "1Shows VidFast Player [1080p FHD]",
+                    isM3u8 = false,
+                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
+                    releaseType = AudioReleaseType.ORIGINAL,
+                    headers = vfHeaders
+                )
+                if (emittedStreamKeys.add(vidFastUrl)) {
+                    send(StreamEmission.SourceFound(vfSource))
+                }
+                val vlSource = CoreStreamSource(
+                    url = vidLinkUrl,
+                    serverName = "VidLink Pro (Embed Player)",
+                    resolutionLabel = "1080p FHD",
+                    quality = "1Shows VidLink Pro Player [1080p FHD]",
+                    isM3u8 = false,
+                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
+                    releaseType = AudioReleaseType.ORIGINAL,
+                    headers = vfHeaders
+                )
+                if (emittedStreamKeys.add(vidLinkUrl)) {
+                    send(StreamEmission.SourceFound(vlSource))
+                }
+            } catch (_: Throwable) {}
+        }
+
+        // 11. Server Group 8: Multi-Language Web Embed (viduki.net/2/)
+        launch {
+            try {
+                val multiEmbedUrl = if (isTv && season != null && episode != null) {
+                    "https://www.viduki.net/2/tv/$tmdbId/$season/$episode?color=0278fd"
+                } else {
+                    "https://www.viduki.net/2/movie/$tmdbId?color=0278fd"
+                }
+                val mlHeaders = mapOf("Referer" to "https://www.1shows.org/", "User-Agent" to defaultHeaders["User-Agent"]!!)
+                val mlSource = CoreStreamSource(
+                    url = multiEmbedUrl,
+                    serverName = "Viduki (Multi-Language Player)",
+                    resolutionLabel = "1080p FHD",
+                    quality = "1Shows Viduki Multi-Language [Web Player]",
+                    isM3u8 = false,
+                    audioTracks = listOf(
+                        CoreAudioTrackDescriptor("English", "en", 2, "AAC"),
+                        CoreAudioTrackDescriptor("Hindi", "hi", 2, "AAC")
+                    ),
+                    releaseType = AudioReleaseType.DUAL_AUDIO,
+                    headers = mlHeaders
+                )
+                if (emittedStreamKeys.add(multiEmbedUrl)) {
+                    send(StreamEmission.SourceFound(mlSource))
+                }
+            } catch (_: Throwable) {}
+        }
     }
 
     override suspend fun getStreamLinks(episodeData: String): StreamResult = withContext(Dispatchers.IO) {
@@ -918,7 +1275,7 @@ class OneShowsPlugin(
         val subtitles = mutableListOf<SubtitleTrack>()
 
         try {
-            withTimeout(6_000L) {
+            withTimeout(8_500L) {
                 getStreamFlow(episodeData).collect { emission ->
                     when (emission) {
                         is StreamEmission.SourceFound -> streams.add(emission.source)

@@ -605,19 +605,32 @@ object OneShowsWasmEngine {
     }
 
     data class MakimaExports(
-        val alloc: String = "_gGry",
-        val reset: String = "_kuez",
-        val writeByte: String = "_0SGL",
-        val readByte: String = "_4vLu",
-        val decryptPepper: String = "_iUeM",
-        val decryptEnvelope: String = "_kGtw"
+        val alloc: String = "_pRhU",
+        val reset: String = "_twc7",
+        val writeByte: String = "_sywi",
+        val readByte: String = "_S02C",
+        val decryptPepper: String = "_Uk9g",
+        val decryptEnvelope: String = "_KejE",
+        val dropPepper: String = "_9nwS"
     )
+
+    data class VidukiServer(
+        val name: String,
+        val language: String,
+        val useUpscale: Boolean = false,
+        val useSpatialAudio: Boolean = false
+    )
+
+    private const val VIDUKI_WASM_B64 = "AGFzbQEAAAABZg1gAX8Bf2ACf38Bf2ADf39/AGACf38AYAAAYAF/AGAEf39/fwBgBX9/f39/AX9gA39/fgBgA39/fwF/YAABf2AKf39/f39/f39/fwF/YBV/f39/f39/f39/f39/f39/f39/f38BfwINAQNlbnYFYWJvcnQABgM4NwIBAAEEAAIFAQEAAQACAAMDAAUFAAcCAQABAAQIBAMDAgAFAwUBCQYDBAEKAQMCAAQCAAsBDAQFAwEAAQZKDn8BQcAIC38BQQALfwFBAAt/AUEAC38BQQALfwFBAAt/AUEAC38BQQALfwFBAAt/AUEAC38BQQALfwFBAAt/AUEAC38BQaygAgsHQggFX3BSaFUAMwVfdHdjNwAxBV9zeXdpADIFX1MwMkMANQVfVWs5ZwA0BV9LZWpFADYFXzlud1MANwZtZW1vcnkCAAgBKgwBNwrOWzdNACMNQQRrJA0QBSMNQQA2AgAjDSAANgIAIAEgACgCCE8EQEGgC0GgHkGyAUEtEAAACyMNIAA2AgAgACgCBCABaiACOgAAIw1BBGokDQtLACMNQQRrJA0QBSMNQQA2AgAjDSAANgIAIAEgACgCCE8EQEGgC0GgHkGnAUEtEAAACyMNIAA2AgAgACgCBCABai0AACMNQQRqJA0LJQAjDUEEayQNEAUjDUEANgIAIw0gADYCACAAKAIIIw1BBGokDQtDACMNQQRrJA0QBSMNQQA2AgAjDSAANgIAIAAQGSABTQRAQaALQaAfQc4AQSkQAAALIAAgAUECdGooAgAjDUEEaiQNCxoAIw1BrCBIBEBBwKACQfCgAkEBQQEQAAALCz4BAX8jDUEIayQNEAUjDUIANwMAIw1BDEEEEAwiATYCACMNIAE2AgQjDSABIAAQLSIANgIAIw1BCGokDSAAC0wAIw1BBGskDRAFIw1BADYCACMNIAA2AgAgABAZIAFNBEBBoAtBoB9B3QBBKRAAAAsjDSAANgIAIAAgAUECdGogAjYCACMNQQRqJA0LIwAgAEUEQA8LIABBFGsiABANIwhGBEAgABATIwRBAWokBAsLUQECfyMNQQhrJA0QBSMNQgA3AwAjDSABEAYiAzYCAANAIAEgAkoEQCMNIAM2AgQgAyACIAAgAmotAAAQASACQQFqIQIMAQsLIw1BCGokDSADC0sAIw1BBGskDRAFIw1BADYCACMNIAA2AgAgASAAKAIMTwRAQaALQdAdQfIAQSoQAAALIw0gADYCACAAKAIEIAFqLQAAIw1BBGokDQsKACAAKAIEQXxxC6MBAQF/IABB7P///wNPBEBB4AlBoApBhQJBHxAAAAsjASMCTwRAAkBBgBAhAgNAIAIQLGshAiMDRQRAIwFBAXRBgAhqJAIMAgsgAkEASg0ACyMBIwEjAmtBgAhJQQp0aiQCCwsjCkUEQBAcCyMKIABBEGoQKyICIAE2AgwgAiAANgIQIAIjCSMIECEgAhAiIwFqJAEgAkEUaiIBQQAgAPwLACABCwoAIAAoAgRBA3ELSAEBfyABRQRADwsgAUEUayIBEA0jCEYEQCAAQRRrIgAQDSIDIwhFRgRAIAAgASACGxATBSMDQQFGIANBA0ZxBEAgARATCwsLC0QAIw1BBGskDRAFIw1BADYCACAAQf////8ASwRAQfAIQaAfQTNBPBAAAAsjDSAAQQJ0QQkQDCIANgIAIw1BBGokDSAAC8MBAQR/IAEoAgBBfHEiA0GAAkkEfyADQQR2BUEfQfz///8DIAMgA0H8////A08bIgNnayIEQQdrIQIgAyAEQQRrdkEQcwshBCABKAIIIQUgASgCBCIDBEAgAyAFNgIICyAFBEAgBSADNgIECyABIAAgAkEEdCAEakECdGoiASgCYEYEQCABIAU2AmAgBUUEQCAAIAJBAnRqIgEoAgRBfiAEd3EhAyABIAM2AgQgA0UEQCAAIAAoAgBBfiACd3E2AgALCwsLvAIBBX8gASgCACEDIAFBBGogASgCAEF8cWoiBCgCACICQQFxBEAgACAEEBAgASADQQRqIAJBfHFqIgM2AgAgAUEEaiABKAIAQXxxaiIEKAIAIQILIANBAnEEQCABQQRrKAIAIgEoAgAhBiAAIAEQECABIAZBBGogA0F8cWoiAzYCAAsgBCACQQJyNgIAIARBBGsgATYCACAAIANBfHEiAkGAAkkEfyACQQR2BUEfQfz///8DIAIgAkH8////A08bIgJnayIDQQdrIQUgAiADQQRrdkEQcwsiAiAFQQR0akECdGooAmAhAyABQQA2AgQgASADNgIIIAMEQCADIAE2AgQLIAAgBUEEdCACakECdGogATYCYCAAIAAoAgBBASAFdHI2AgAgACAFQQJ0aiIAIAAoAgRBASACdHI2AgQLEgAgACAANgIEIAAgADYCCCAAC4YBAQJ/IAAjBkYEQCAAKAIIJAYLAkAgABALIgFFBEAgACgCCBoMAQsgASAAKAIIIgI2AgggAiABEB8LIwchASAAKAIMIgJBAk0Ef0EBBSACQYAgKAIASwRAQaALQeALQRVBHBAAAAsgAkECdEGEIGooAgBBIHELIQIgACABIwhFQQIgAhsQIQvSAQEDfwJAAkACQAJAAkACQAJAAkACQCAAQQhrKAIADgoAAQIDBAUICAgGBwsPCw8LDwsgABAjDwsgABAjDwsjDUEEayQNEAUjDUEANgIAIw0gADYCACAAKAIEIQEjDSAANgIAIAEgACgCDEECdGohAgNAIAEgAkkEQCABKAIAIgMEQCADEAgLIAFBBGohAQwBCwsjDSAANgIAIAAoAgAQCCMNQQRqJA0PCw8LAAsjDUEEayQNEAUjDUEANgIAIw0gADYCACAAKAIAEAgjDUEEaiQNC5UFAgZ/AX4jDUEUayQNEAUjDUEAQRT8CwAjDUEIEA8iATYCACMNIAE2AgQgAUEAQefMp9AGEAcjDSABNgIEIAFBAUGF3Z7bexAHIw0gATYCBCABQQJB8ua74wMQByMNIAE2AgQgAUEDQbrqv6p6EAcjDSABNgIEIAFBBEH/pLmIBRAHIw0gATYCBCABQQVBjNGV2HkQByMNIAE2AgQgAUEGQauzj/wBEAcjDSABNgIEIAFBB0GZmoPfBRAHIw0gADYCBCAAEAOsQgOGIQcjDSAANgIEIAAQA0HAAG9BOEgEfyMNIAA2AgRBwAAgABADQcAAb2sFIw0gADYCBEGAASAAEANBwABvawshBiMNIAA2AgQjDSAAEAMgBmoQBiIGNgIIA0AjDSAANgIEIAAQAyADSgRAIw0gBjYCBCMNIAA2AgwgBiADIAAgAxACEAEgA0EBaiEDDAELCyMNIAY2AgQjDSAANgIMIAYgABADQYABEAEDQCAEQQhIBEAjDSAGNgIEIw0gBjYCDCAGIAYQA0EBayAEayAHIARBA3SsiKdB/wFxEAEgBEEBaiEEDAELCwNAIw0gBjYCBCAGEAMgBUoEQCMNIAE2AgQjDSAGNgIMIAEgBiAFEC8gBUFAayEFDAELCyMNQSAQBiIANgIQA0AgAkEISARAIw0gADYCBCMNIAE2AgwgACACQQJ0IgMgASACEARBGHYQASMNIAA2AgQjDSABNgIMIAAgA0EBaiABIAIQBEEQdkH/AXEQASMNIAA2AgQjDSABNgIMIAAgA0ECaiABIAIQBEEIdkH/AXEQASMNIAA2AgQjDSABNgIMIAAgA0EDaiABIAIQBEH/AXEQASACQQFqIQIMAQsLIw1BFGokDSAAC9cHAgt/A34jDUE8ayQNEAUjDUEAQTz8CwAjDSABNgIAAkACQCABEANBDEcNACMNIAM2AgAgAxADQRBHDQAjDSAANgIAIw0gABAwIgg2AgQjDUEQEAYiADYCCCMNQRAQBiIONgIMIw0gCDYCACMNIAA2AhAjDSAONgIUIAggACAOEBcjDUEQEAYiDzYCGANAIAVBDEgEQCMNIA82AgAjDSABNgIQIA8gBSABIAUQAhABIAVBAWohBQwBCwsjDSAPNgIAIA9BD0EBEAEjDUEQEAYiADYCHCMNIAA2AgAjDSAONgIQIw0gBDYCFCMNIAQ2AiAgACAOIAQgBBADECgjDSAANgIAIw0gDjYCECMNIAI2AhQjDSACNgIgIAAgDiACIAIQAxAoIw1BEBAGIgE2AiQjDSAENgIAIAQQA6xCA4YhECMNIAI2AgAgAhADrEIDhiERA0AgCUEISARAIw0gATYCACABQQcgCWsgECAJQQN0rCISiKdB/wFxEAEjDSABNgIAIAFBDyAJayARIBKIp0H/AXEQASAJQQFqIQkMAQsLA0AgCkEQSARAIw0gADYCACMNIAA2AhAgACAKEAIhBCMNIAE2AhAgACAKIAEgChACIARzEAEgCkEBaiEKDAELCyMNIAA2AgAjDSAONgIQIAAgDhApIw1BEBAGIgE2AigjDSAINgIAIw0gDzYCECMNIAE2AhQgCCAPIAEQFyMNQRAQBiIENgIsA0AgC0EQSARAIw0gBDYCACMNIAA2AhAgACALEAIhBSMNIAE2AhAgBCALIAEgCxACIAVzQf8BcRABIAtBAWohCwwBCwsDQCAGQRBIBEAjDSAENgIAIAQgBhACIQAjDSADNgIAIAcgAyAGEAIgAHNyIQcgBkEBaiEGDAELCyAHQf8BcQ0AIw0gAjYCACMNIAIQAxAGIgA2AjAjDUEQEAYiAzYCNANAIA1BEEgEQCMNIAM2AgAjDSAPNgIQIAMgDSAPIA0QAhABIA1BAWohDQwBCwsjDSADNgIAIAMQJSMNQRAQBiIENgI4A0AjDSACNgIAIAIQAyAMSgRAIw0gCDYCACMNIAM2AhAjDSAENgIUIAggAyAEEBcjDSACNgIAIAIQAyAMa0EQTgR/QRAFIw0gAjYCACACEAMgDGsLIQVBACEBA0AgASAFSARAIw0gADYCACMNIAI2AhAgAiABIAxqIgYQAiEHIw0gBDYCECAAIAYgBCABEAIgB3NB/wFxEAEgAUEBaiEBDAELCyAMQRBqIQwjDSADNgIAIAMQJQwBCwsMAQtBACEACyMNQTxqJA0gAAviCQEMfyMNQRBrJA0QBSMNQgA3AwAjDUIANwMIIw1BEBAGIgM2AgADQCAEQRBIBEAjDSADNgIEIw0gATYCCCADIAQgASAEEAIQASAEQQFqIQQMAQsLQQAhAQNAIAFBBEgEQCMNIAA2AgQgACABEAQhBCMNIAM2AgQjDSADNgIIIAMgAUECdCIFIAMgBRACIARBGHZzEAEjDSADNgIEIw0gAzYCCCADIAVBAWoiBiADIAYQAiAEQRB2cxABIw0gAzYCBCMNIAM2AgggAyAFQQJqIgYgAyAGEAIgBEEIdnMQASMNIAM2AgQjDSADNgIIIAMgBUEDaiIFIAMgBRACIARzEAEgAUEBaiEBDAELC0EBIQQDQCAEQQ5MBEBBACEBA0AgAUEQSARAIw0gAzYCBCMNQdAcNgIIIw0gAzYCDCADIAFB0BwgAyABEAIQChABIAFBAWohAQwBCwsjDSADNgIEIANBARACIQEjDSADNgIEIw0gAzYCCCADQQEgA0EFEAIQASMNIAM2AgQjDSADNgIIIANBBSADQQkQAhABIw0gAzYCBCMNIAM2AgggA0EJIANBDRACEAEjDSADNgIEIANBDSABEAEjDSADNgIEIANBAhACIQEjDSADNgIEIANBBhACIQUjDSADNgIEIw0gAzYCCCADQQIgA0EKEAIQASMNIAM2AgQjDSADNgIIIANBBiADQQ4QAhABIw0gAzYCBCADQQogARABIw0gAzYCBCADQQ4gBRABIw0gAzYCBCADQQ8QAiEBIw0gAzYCBCMNIAM2AgggA0EPIANBCxACEAEjDSADNgIEIw0gAzYCCCADQQsgA0EHEAIQASMNIAM2AgQjDSADNgIIIANBByADQQMQAhABIw0gAzYCBCADQQMgARABIARBDkgEQEEAIQEDQCABQQRIBEAjDSADNgIEIAMgAUECdCIIEAIhCyMNIAM2AgQgAyAIQQFqIgUQAiEMIw0gAzYCBCADIAhBAmoiBhACIQkjDSADNgIEIAMgCEEDaiIHEAIiCiALIAxzIg0gCXNzIQ4jDSADNgIEIAMgCCANQf8BcUEHdkEbbCANQQF0c0H/AXEgCyAOc3NB/wFxEAEjDSADNgIEIAMgBSAJIAxzIgVB/wFxQQd2QRtsIAVBAXRzQf8BcSAMIA5zc0H/AXEQASMNIAM2AgQgAyAGIAkgCnMiBUH/AXFBB3ZBG2wgBUEBdHNB/wFxIAkgDnNzQf8BcRABIw0gAzYCBCADIAcgCiALcyIFQf8BcUEHdkEbbCAFQQF0c0H/AXEgCiAOc3NB/wFxEAEgAUEBaiEBDAELCwtBACEBA0AgAUEESARAIw0gADYCBCAAIARBAnQgAWoQBCEFIw0gAzYCBCMNIAM2AgggAyABQQJ0IgYgAyAGEAIgBUEYdnMQASMNIAM2AgQjDSADNgIIIAMgBkEBaiIHIAMgBxACIAVBEHZzEAEjDSADNgIEIw0gAzYCCCADIAZBAmoiByADIAcQAiAFQQh2cxABIw0gAzYCBCMNIAM2AgggAyAGQQNqIgYgAyAGEAIgBXMQASABQQFqIQEMAQsLIARBAWohBAwBCwtBACEAA0AgAEEQSARAIw0gAjYCBCMNIAM2AgggAiAAIAMgABACEAEgAEEBaiEADAELCyMNQRBqJA0LPwAjDUEEayQNEAUjDUEANgIAIw0gADYCACABIABBFGsoAhBBAXZPBH9BfwUgACABQQF0ai8BAAsjDUEEaiQNCw0AIABBFGsoAhBBAnYLjgEBAn8gAUGAAkkEfyABQQR2BUEfIAEQGyIBZ2siA0EHayECIAEgA0EEa3ZBEHMLIQEgACACQQJ0aigCBEF/IAF0cSIBBH8gACABaCACQQR0akECdGooAmAFIAAoAgBBfyACQQFqdHEiAQR/IAAgACABaCIAQQJ0aigCBGggAEEEdGpBAnRqKAJgBUEACwsLHQAgAEEBQRsgAGdrdGpBAWsgACAAQf7///8BSRsLlwEBAn8/ACIAQQBMBH9BASAAa0AAQQBIBUEACwRAAAtBsKACQQA2AgBB0KwCQQA2AgADQCABQRdJBEAgAUECdEGwoAJqQQA2AgRBACEAA0AgAEEQSQRAIAFBBHQgAGpBAnRBsKACakEANgJgIABBAWohAAwBCwsgAUEBaiEBDAELC0GwoAJB1KwCPwCsQhCGEB1BsKACJAoLhgEBA38gAUETakFwcUEEayEBIAAoAqAMIgMEQCABQRBrIgUgA0YEQCADKAIAIQQgBSEBCwsgAqdBcHEgAWsiA0EUSQRADwsgASAEQQJxIANBCGsiA0EBcnI2AgAgAUEANgIEIAFBADYCCCABQQRqIANqIgNBAjYCACAAIAM2AqAMIAAgARARC24BAn8jACIABEAgABAICyMLIgAEQCAAEAgLQZAREAhB4BIQCEGwFxAIQYAaEAhB0BwQCEGgHRAIQaALEAhB8AgQCEHgCRAIIwUiARALIQADQCAAIAFHBEAgABANGiAAQRRqEBQgABALIQAMAQsLCxIAIAAgASAAKAIEQQNxcjYCBAsSACAAIAAoAgRBfHEgAXI2AgQLKQEBfyABKAIIIQMgACABIAJyNgIEIAAgAzYCCCADIAAQHyABIAA2AggLDQAgACgCAEF8cUEEagsJACAAKAIAEAgLEQAgACABNgIAIAAgAUEAEA4LZgEBfyMNQQhrJA0QBSMNQgA3AwBBDyEBA0AgAUEMTgRAAkAjDSAANgIAIw0gADYCBCAAIAEgACABEAJBAWpB/wFxEAEjDSAANgIAIAAgARACDQAgAUEBayEBDAILCwsjDUEIaiQNC9wEAQd/Iw1BJGskDRAFIw1BAEEk/AsAIw0gADYCACMNIAA2AgQgABADQcAASgRAIw0gADYCBCMNIAAQFSIANgIACyMNQcAAEAYiCDYCCANAIw0gADYCBCAAEAMgAkoEQCMNIAg2AgQjDSAANgIMIAggAiAAIAIQAhABIAJBAWohAgwBCwsjDUHAABAGIgA2AhAjDUHAABAGIgI2AhQDQCADQcAASARAIw0gADYCBCMNIAg2AgwgACADIAggAxACQdwAc0H/AXEQASMNIAI2AgQjDSAINgIMIAIgAyAIIAMQAkE2c0H/AXEQASADQQFqIQMMAQsLIw0gAjYCBCMNIAIQAyEIIw0gATYCBCABEAMgCGoQBiIDNgIYA0AjDSACNgIEIAIQAyAESgRAIw0gAzYCBCMNIAI2AgwgAyAEIAIgBBACEAEgBEEBaiEEDAELCwNAIw0gATYCBCABEAMgBUoEQCMNIAM2AgQjDSACNgIMIAIQAyAFaiEEIw0gATYCDCADIAQgASAFEAIQASAFQQFqIQUMAQsLIw0gAzYCBCMNIAMQFSIBNgIcIw0gADYCBCMNIAAQAyEDIw0gATYCBCABEAMgA2oQBiICNgIgA0AjDSAANgIEIAAQAyAGSgRAIw0gAjYCBCMNIAA2AgwgAiAGIAAgBhACEAEgBkEBaiEGDAELCwNAIw0gATYCBCABEAMgB0oEQCMNIAI2AgQjDSAANgIMIAAQAyAHaiEDIw0gATYCDCACIAMgASAHEAIQASAHQQFqIQcMAQsLIw0gAjYCBCACEBUjDUEkaiQNC6IDAQZ/Iw1BGGskDRAFIw1BAEEY/AsAIw0gATYCACMNIAA2AgQjDSABIAAQJiIGNgIIIw1BIBAGIgQ2AgwjDUEAEAYiADYCEEEBIQUDQCADQSBIBEAjDSAANgIAIw0gABADIQcjDSACNgIAIAIQAyAHakEBahAGIgc2AhRBACEBA0AjDSAANgIAIAAQAyABSgRAIw0gBzYCACMNIAA2AgQgByABIAAgARACEAEgAUEBaiEBDAELC0EAIQEDQCMNIAI2AgAgAhADIAFKBEAjDSAHNgIAIw0gADYCBCAAEAMgAWohCCMNIAI2AgQgByAIIAIgARACEAEgAUEBaiEBDAELCyMNIAc2AgAjDSAHNgIEIAcgBxADQQFrIAVB/wFxEAEjDSAGNgIAIw0gBzYCBCMNIAYgBxAmIgA2AhAjDSAANgIAIAAQA7dBICADa7ek/AIhB0EAIQEDQCABIAdIBEAjDSAENgIAIw0gADYCBCAEIAEgA2ogACABEAIQASABQQFqIQEMAQsLIAMgB2ohAyAFQQFqIQUMAQsLIw1BGGokDSAEC5sBAQR/Iw1BCGskDRAFIw1CADcDAANAIAMgBUoEQEEQIAMgBWsiBCAEQRBOGyEGQQAhBANAIAQgBkgEQCMNIAA2AgAjDSAANgIEIAAgBBACIQcjDSACNgIEIAAgBCACIAQgBWoQAiAHcxABIARBAWohBAwBCwsjDSAANgIAIw0gATYCBCAAIAEQKSAFQRBqIQUMAQsLIw1BCGokDQuHAwEHfyMNQRBrJA0QBSMNQgA3AwAjDUIANwMIIw1BEBAGIgc2AgAjDUEQEAYiCDYCBANAIAJBEEgEQCMNIAg2AggjDSAANgIMIAggAiAAIAIQAhABIAJBAWohAgwBCwsDQCAFQYABSARAIw0gATYCCCABIAVBA3YQAkEHIAVBB3FrQQdxdkEBcQRAQQAhAgNAIAJBEEgEQCMNIAc2AggjDSAHNgIMIAcgAhACIQMjDSAINgIMIAcgAiAIIAIQAiADcxABIAJBAWohAgwBCwsLQQAhAkEAIQYDQCAGQRBIBEAjDSAINgIIIAggBhACQQFxIw0gCDYCCCMNIAg2AgwgCCAGIAJBB3QgCCAGEAJBAXZyQf8BcRABIQIgBkEBaiEGDAELCyACBEAjDSAINgIIIw0gCDYCDCAIQQAgCEEAEAJB4QFzEAELIAVBAWohBQwBCwsDQCAEQRBIBEAjDSAANgIIIw0gBzYCDCAAIAQgByAEEAIQASAEQQFqIQQMAQsLIw1BEGokDQssAD8AQRB0QaygAmtBAXYkAkHQChASJAVB8AoQEiQHQYAMEBIkCUEAEAYkCwuTAgEDfyABQfz///8DSwRAQeAJQbAMQc0DQR0QAAALIABBDCABQRNqQXBxQQRrIAFBDE0bIgMQGiIBRQRAQQQgACgCoAw/ACIBQRB0QQRrR3QgAxAbIAMgA0GAAk8bakH//wNqQYCAfHFBEHYhAiABIAIgASACShtAAEEASARAIAJAAEEASARAAAsLIAAgAUEQdD8ArEIQhhAdIAAgAxAaIQELIAEoAgAaIAAgARAQIAEoAgAiAkF8cSADayIEQRBPBEAgASADIAJBAnFyNgIAIAFBBGogA2oiAiAEQQRrQQFyNgIAIAAgAhARBSABIAJBfnE2AgAgAUEEaiABKAIAQXxxaiIAIAAoAgBBfXE2AgALIAEL/wIBAn8CQAJAAkACQCMDDgMAAQIDC0EBJANBACQEEB4jByQGIwQPCyMIRSEBIwYQCyEAA0AgACMHRwRAIAAkBiAAEA0gAUcEQCAAIAEQIEEAJAQgAEEUahAUIwQPCyAAEAshAAwBCwtBACQEEB4jBhALIwdGBEAjDSEAA0AgAEGsoAJJBEAgACgCABAIIABBBGohAAwBCwsjBhALIQADQCAAIwdHBEAgABANIAFHBEAgACABECAgAEEUahAUCyAAEAshAAwBCwsjCSEAIwckCSAAJAcgASQIIAAQCyQGQQIkAwsjBA8LIwYiACMHRwRAIAAQCyQGIAAQDRogAEGsoAJJBEAgAEEANgIEIABBADYCCAUjASAAECJrJAEgAEEEaiIAQaygAk8EQCMKRQRAEBwLIABBBGshASAAQQ9xQQEgABsEf0EBBSABKAIAQQFxCxogASABKAIAQQFyNgIAIwogARARCwtBCg8LIwcjBzYCBCMHIwc2AghBACQDC0EAC7YBAQF/Iw1BEGskDRAFIw1CADcDACMNQgA3AwggAEUEQCMNQQxBAxAMIgA2AgALIw0gADYCBCAAQQAQJCMNIAA2AgQgAEEANgIEIw0gADYCBCAAQQA2AgggAUH8////A0sEQEHwCEGgCUETQTkQAAALIw0gAUEBEAwiAjYCCCMNIAA2AgQjDSACNgIMIAAgAhAkIw0gADYCBCAAIAI2AgQjDSAANgIEIAAgATYCCCMNQRBqJA0gAAvwAQEDfyMNQQRrJA0QBSMNQQA2AgAjDSAANgIAIAEgACgCCCICQQJ2SwRAIAFB/////wBLBEBB8AhB0B1BE0EwEAAACyMNIAA2AgACQEH8////AyACQQF0IgIgAkH8////A08bIgJBCCABIAFBCE0bQQJ0IgEgASACSRsiAyAAKAIAIgJBFGsiBCgCAEF8cUEQa00EQCAEIAM2AhAgAiEBDAELIAMgBCgCDBAMIgEgAiADIAQoAhAiBCADIARJG/wKAAALIAEgAkcEQCAAIAE2AgAgACABNgIEIAAgAUEAEA4LIAAgAzYCCAsjDUEEaiQNC/8HAQp/Iw1BDGskDRAFIw1CADcDACMNQQA2AggjDUHAABAPIgw2AgADQCAEQRBIBEAjDSAMNgIEIw0gATYCCCABIAIgBEECdGoiBRACQRh0Iw0gATYCCCABIAVBAWoQAkEQdHIjDSABNgIIIAEgBUECahACQQh0ciEDIw0gATYCCCAMIAQgASAFQQNqEAIgA3IQByAEQQFqIQQMAQsLQRAhBANAIARBwABIBEAjDSAMNgIEIAwgBEEPayIDEAQhAiMNIAw2AgQgDCADEAQhASMNIAw2AgQgAkEZdCACQQd2ciABQQ50IAFBEnZycyAMIAMQBEEDdnMhBSMNIAw2AgQgDCAEQQJrIgMQBCECIw0gDDYCBCAMIAMQBCEBIw0gDDYCBCACQQ90IAJBEXZyIAFBDXQgAUETdnJzIAwgAxAEQQp2cyECIw0gDDYCBCMNIAw2AgggDCAEQRBrEAQgBWohASMNIAw2AgggDCAEIAwgBEEHaxAEIAFqIAJqEAcgBEEBaiEEDAELCyMNIAA2AgQgAEEAEAQhCCMNIAA2AgQgAEEBEAQhBCMNIAA2AgQgAEECEAQhAyMNIAA2AgQgAEEDEAQhBiMNIAA2AgQgAEEEEAQhByMNIAA2AgQgAEEFEAQhAiMNIAA2AgQgAEEGEAQhASMNIAA2AgQgAEEHEAQhBQNAIAtBwABIBEAjDUGAGjYCBCMNQQRrJA0QBSMNQQA2AgAjDUGAGjYCACALQYwaKAIATwRAQaALQdAdQfIAQSoQAAALIw1BgBo2AgBBhBooAgAgC0ECdGooAgAhCSMNQQRqJA0jDSAMNgIEIAwgCxAEIAdBB3QgB0EZdnIgB0EadCAHQQZ2ciAHQRV0IAdBC3Zyc3MgBWogAiAHcSAHQX9zIAFxc2ogCWpqIQogCEEKdCAIQRZ2ciAIQR50IAhBAnZyIAhBE3QgCEENdnJzcyADIARxIAQgCHEgAyAIcXNzaiABIQUgAiEBIAchAiAGIApqIQcgAyEGIAQhAyAIIQQgCmohCCALQQFqIQsMAQsLIw0gADYCBCMNIAA2AgggAEEAIABBABAEIAhqEAcjDSAANgIEIw0gADYCCCAAQQEgAEEBEAQgBGoQByMNIAA2AgQjDSAANgIIIABBAiAAQQIQBCADahAHIw0gADYCBCMNIAA2AgggAEEDIABBAxAEIAZqEAcjDSAANgIEIw0gADYCCCAAQQQgAEEEEAQgB2oQByMNIAA2AgQjDSAANgIIIABBBSAAQQUQBCACahAHIw0gADYCBCMNIAA2AgggAEEGIABBBhAEIAFqEAcjDSAANgIEIw0gADYCCCAAQQcgAEEHEAQgBWoQByMNQQxqJA0L6AMBBH8jDUEMayQNEAUjDUIANwMAIw1BADYCCCMNQTwQDyICNgIAA0AgAUEISARAIw0gAjYCBCMNIAA2AgggACABQQJ0IgMQAkEYdCMNIAA2AgggACADQQFqEAJBEHRyIw0gADYCCCAAIANBAmoQAkEIdHIhBCMNIAA2AgggAiABIAAgA0EDahACIARyEAcgAUEBaiEBDAELC0EIIQADQCAAQTxIBEAjDSACNgIEIAIgAEEBaxAEIQEgAEEHcQR/IABBCG9BBEYEfyMNQdAcNgIEQdAcIAFBGHYQCkEYdCMNQdAcNgIEQdAcIAFBEHZB/wFxEApBEHRyIw1B0Bw2AgRB0BwgAUEIdkH/AXEQCkEIdHIhAyMNQdAcNgIEQdAcIAFB/wFxEAogA3IFIAELBSMNQdAcNgIEQdAcIAFBCHQgAUEYdnIiAUEYdhAKQRh0Iw1B0Bw2AgRB0BwgAUEQdkH/AXEQCkEQdHIjDUHQHDYCBEHQHCABQQh2Qf8BcRAKQQh0ciEDIw1B0Bw2AgRB0BwgAUH/AXEQCiADciMNQaAdNgIEQaAdIABBCG0QCkEYdHMLIQEjDSACNgIEIw0gAjYCCCACIAAgAiAAQQhrEAQgAXMQByAAQQFqIQAMAQsLIw1BDGokDSACC2EBAn8jDUEEayQNEAUjDUEANgIAIw1BAEEBEAwiAEGAHkEA/AoAACAANgIAQRBBBRAMIgEgADYCACABIABBABAOIAEgADYCBCABQQA2AgggAUEANgIMIw1BBGokDSABJAALDAAgACABaiACOgAAC6QBAQN/Iw1BDGskDRAFIw1CADcDACMNQQA2AggjDSAAEAYiAzYCACMNIwAiAjYCBCMNIAM2AggjDUEEayQNEAUjDUEANgIAIw0gAjYCACACIAIoAgwiAEEBaiIBEC4jDSACNgIAIAIoAgQgAEECdGogAzYCACACIANBARAOIw0gAjYCACACIAE2AgwjDUEEaiQNIw0gAzYCBCADKAIEIw1BDGokDQvPBQAjDUE8ayQNEAUjDUEAQTz8CwAjDSAAIAEQCSIBNgIAIw0gAiADEAkiAjYCBCMNIAQgBRAJIgM2AggjDSAGIAcQCSIFNgIMIw0gCCAJEAkiBjYCECMNQYABEAYiBzYCFEEAIQADQCAAQYABSARAIw0gBzYCGCMNQZARNgIcIw1BsBc2AiAjDUEEayQNEAUjDUEANgIAIw1BsBc2AgAgAEG8FygCAE8EQEGgC0HQHUHyAEEqEAAACyMNQbAXNgIAQbQXKAIAIABBAnRqKAIAIQQjDUEEaiQNQZARIAQQCiEEIw1B4BI2AhwgByAAQeASIAAQCiAEc0H/AXEQASAAQQFqIQAMAQsLIw0gATYCGCMNIAEQAyEEIw0gAjYCGCACEAMgBGoQBiIANgIkQQAhBANAIw0gATYCGCABEAMgBEoEQCMNIAA2AhgjDSABNgIcIAAgBCABIAQQAhABIARBAWohBAwBCwtBACEEA0AjDSACNgIYIAIQAyAESgRAIw0gADYCGCMNIAE2AhwgARADIARqIQgjDSACNgIcIAAgCCACIAQQAhABIARBAWohBAwBCwsjDUEVEAYiBDYCKEEAIQIDQCACQRVIBEAjDSAENgIYIAQgAkHgHiACEBhB/wFxEAEgAkEBaiECDAELCyMNIAc2AhgjDSAANgIcIw0gBDYCICMNIAcgACAEECciADYCLEEAIQIDQCACQYABSARAIw0gBzYCGCAHIAJBABABIAJBAWohAgwBCwsjDSAANgIYIw0gAzYCHCMNIAU2AiAjDSAGNgIwIw0gATYCNCMNIAAgAyAFIAYgARAWIgI2AjhBACEBA0AjDSAANgIYIAAQAyABSgRAIw0gADYCGCAAIAFBABABIAFBAWohAQwBCwsgAkUEQEEAJAwjDUE8aiQNQX8PCyACJAtBASQMIw0jCyIANgIYIAAQAyMNQTxqJA0LCgAgACABai0AAAubBgEIfyMNQdgAayQNEAUjDUEAQdgA/AsAAn8CQCMMRQ0AIw0gACABEAkiATYCACMNIAIgAxAJIgI2AgQjDSAEIAUQCSIDNgIIIw0gBiAHEAkiBDYCDCMNIAggCRAJIgU2AhAjDSAKIAsQCSIGNgIUIw0gDCANEAkiBzYCGCMNIA4gDxAJIgg2AhwjDSAQIBEQCSIJNgIgIw0gEiATEAkiCjYCJCMNIAE2AigjDSABEAMhCyMNIAI2AiggAhADIAtqIQsjDSADNgIoIAMQAyALahAGIgs2AiwDQCMNIAE2AiggARADIBhKBEAjDSALNgIoIBUiAEEBaiEVIw0gATYCMCALIAAgASAYEAIQASAYQQFqIRgMAQsLA0AjDSACNgIoIAIQAyAZSgRAIw0gCzYCKCAVIgBBAWohFSMNIAI2AjAgCyAAIAIgGRACEAEgGUEBaiEZDAELCwNAIw0gAzYCKCADEAMgGkoEQCMNIAs2AiggFSIAQQFqIRUjDSADNgIwIAsgACADIBoQAhABIBpBAWohGgwBCwsjDUEOEAYiADYCNANAIBZBDkgEQCMNIAA2AiggACAWQeAfIBYQGEH/AXEQASAWQQFqIRYMAQsLIw0jCyIBNgIoIw0gCzYCMCMNIAA2AjgjDSABIAsgABAnIgA2AjwjDSAANgIoIw0gBTYCMCMNIAY2AjgjDSAHNgJAIw0gBDYCRCMNIAAgBSAGIAcgBBAWIgE2AkgDQCMNIAA2AiggABADIBtKBEAjDSAANgIoIAAgG0EAEAEgG0EBaiEbDAELCyABRQ0AIw0gATYCKCMNIAg2AjAjDSAJNgI4Iw0gCjYCQCMNIAQ2AkQjDSABIAggCSAKIAQQFiIANgJMIw0gATYCUANAIw0gATYCKCABEAMgHEoEQCMNIAE2AiggASAcQQAQASAcQQFqIRwMAQsLIABFDQAjDSAANgJUA0AjDSAANgIoIAAQAyAXSgRAIw0gADYCKCAUIBdqIAAgFxACOgAAIBdBAWohFwwBCwsjDSAANgIoIAAQAwwBC0F/CyMNQdgAaiQNC1UBAn8jDUEEayQNEAUjDUEANgIAA0AjDSMLIgE2AgAgARADIABKBEAjDSMLIgE2AgAgASAAQQAQASAAQQFqIQAMAQsLQQAQBiQLQQAkDCMNQQRqJA0LC78VNwBBjAgLARwAQZgICwEBAEGsCAsBLABBuAgLDgUAAAAQAAAAIAQAACAEAEHcCAsBLABB6AgLIwIAAAAcAAAASQBuAHYAYQBsAGkAZAAgAGwAZQBuAGcAdABoAEGMCQsBPABBmAkLLQIAAAAmAAAAfgBsAGkAYgAvAGEAcgByAGEAeQBiAHUAZgBmAGUAcgAuAHQAcwBBzAkLATwAQdgJCy8CAAAAKAAAAEEAbABsAG8AYwBhAHQAaQBvAG4AIAB0AG8AbwAgAGwAYQByAGcAZQBBjAoLATwAQZgKCycCAAAAIAAAAH4AbABpAGIALwByAHQALwBpAHQAYwBtAHMALgB0AHMAQYwLCwE8AEGYCwsrAgAAACQAAABJAG4AZABlAHgAIABvAHUAdAAgAG8AZgAgAHIAYQBuAGcAZQBBzAsLASwAQdgLCxsCAAAAFAAAAH4AbABpAGIALwByAHQALgB0AHMAQZwMCwE8AEGoDAslAgAAAB4AAAB+AGwAaQBiAC8AcgB0AC8AdABsAHMAZgAuAHQAcwBB3AwLAhwCAEHoDAuIBAEAAAAAAgAAs7NRbUhGnCsIYZ1FPcVF/eV1IcUEIHl8VBGGBU53LQn/gh9GEjakUwVM/wujbQ3OmORib0muxkhCL0VpRDFBZo+iKwJvg2lpjHkZ2uoqxmVpDLFwq/vAXR5c1dWeGPz77lPWADnATWKPq6zbOTRRXgBH4ZaTMv/jtjhiHFExqz+j13elR/05qHUukVgY+O7x3TzdaWKtR2aNxXCwLRo37h25FMaH0fL54z5IpvhRAc5bTTXZ8GzZ84ZHF1TCu6gPDdEOIzecJAt5RkRP1p697FGmUOl0/QO7yg5P6tDFxMBSGZEFwKdcqlMPmjC9HPA1kx7YMOqaw2V7Ai6AeYFSesMJX7Pi+FenanRczfj7p7ailDP3j1wU0gPkMY5VHkwlXnXi9/FEdjt10m6VIJGeKjfQ4g9wFNKMlvlqseEDSZMlb3YpRY4r/VJd3zrZXR2SjXs8ypGxmZ8vLwCI1pnG7SqC3o85eyvw6kmi9W68QJ77hIF8Vq4C+Jzmzvv1Mg7xCKOQv1O13+dAlzTruI8kix0vNQjnoN2CP6yu12m/kgSmbjqkra93LIZ0JjtVZBXEP+AQfE78VWIbWKc8tLCXnVEc5gzMj/8HivztP+MeDV2MhMiZAgG6lAk1TGGulBia1WGkIx2NX5XhwWRFR89JkOL5A+y9GPvaIXUjwIOWCbgAQfwQCwEsAEGIEQsWBgAAABAAAABwBgAAcAYAAAACAAAAAgBBrBELAZwAQbgRC4gBAQAAAIAAAACH5wGKdPpiKAw3CSgbl0A/Wvwb4Hliiv2w11LB20+AZy++sSfk0ZUlhM7oSi83khL+6efHwHFo/OutaRLUa8jdSAlpkqaezBi1SGTbyBlHTC6MGkW75n5tqO3cif3LLxVClduBQLdLK1/70TYuDucqhEdPanZTKI9QX759igok8ABBzBILASwAQdgSCxUGAAAAEAAAAMAIAADACAAAgAAAAIAAQfwSCwIcAgBBiBMLhQQBAAAAAAIAAA8AAACGAQAAFgAAAAABAACcAAAA7AAAAKoBAAAjAAAAIQEAABQAAAAgAQAAZgAAAAkAAABiAAAAeQAAADMAAAAtAAAAFAEAAMABAABpAAAAkwEAADABAADSAQAAegEAAFsBAADwAAAA6wAAACsBAACOAAAAbAAAAIcBAAACAAAAKgEAAO4AAAC2AAAAyQAAAOABAADdAQAAxAEAAAMAAABtAQAACgAAAGsAAAAbAAAA5gEAAAsAAABnAQAAlgAAAI0BAAB4AAAAbwEAAE8BAAC0AAAAPQEAAAEBAADcAQAAigAAAJsBAABuAAAAhAAAAL8BAACLAAAA0QAAAIMBAADOAQAAlwAAAF0AAACvAQAAXAEAAA0BAADTAQAASAEAAP0AAACRAQAAHAEAAIAAAABVAAAAkwAAANkAAAD6AQAAJgEAAIsBAACIAAAAYAEAABcBAAC9AQAAfgEAAMQAAACnAAAAgwAAAFwAAABfAQAA1gEAALUBAABTAAAA1AAAAE0AAAAFAQAAfgAAAO0BAADyAQAAGwEAAMsBAABsAQAAhgAAAJkBAAB3AAAAVwAAAO0AAAAKAQAAyAEAAP8AAABgAAAAfQEAAMcBAABGAQAAxgAAACQAAAAZAAAAGQEAAEoAAACJAAAAjwAAADUBAADfAAAAJQEAAPkBAAD7AEGcFwsBLABBqBcLFQcAAAAQAAAAkAkAAJAJAAAAAgAAgABBzBcLAhwBAEHYFwuIAgEAAAAAAQAAmC+KQpFEN3HP+8C1pdu16VvCVjnxEfFZpII/ktVeHKuYqgfYAVuDEr6FMSTDfQxVdF2+cv6x3oCnBtybdPGbwcFpm+SGR77vxp3BD8yhDCRvLOktqoR0StypsFzaiPl2UlE+mG3GMajIJwOwx39Zv/ML4MZHkafVUWPKBmcpKRSFCrcnOCEbLvxtLE0TDThTVHMKZbsKanYuycKBhSxykqHov6JLZhqocItLwqNRbMcZ6JLRJAaZ1oU1DvRwoGoQFsGkGQhsNx5Md0gntbywNLMMHDlKqthOT8qcW/NvLmjugo90b2OleBR4yIQIAseM+v++kOtsUKT3o/m+8nhxxgBB7BkLASwAQfgZCxUIAAAAEAAAAOALAADgCwAAAAEAAEAAQZwaCwIcAQBBqBoLiAIBAAAAAAEAAGN8d3vya2/FMAFnK/7Xq3bKgsl9+llH8K3Uoq+cpHLAt/2TJjY/98w0peXxcdgxFQTHI8MYlgWaBxKA4usnsnUJgywaG25aoFI71rMp4y+EU9EA7SD8sVtqy745SkxYz9DvqvtDTTOFRfkCf1A8n6hRo0CPkp049by22iEQ//PSzQwT7F+XRBfEp349ZF0Zc2CBT9wiKpCIRu64FN5eC9vgMjoKSQYkXMLTrGKRleR558g3bY3VTqlsVvTqZXquCLp4JS4cprTG6N10H0u9i4pwPrVmSAP2DmE1V7mGwR2e4fiYEWnZjpSbHofpzlUo34yhiQ2/5kJoQZktD7BUuxYAQbwcCwEsAEHIHAsWBgAAABAAAAAwDQAAMA0AAAABAAAAAQBB7BwLARwAQfgcCxMBAAAACwAAAAABAgQIECBAgBs2AEGMHQsBLABBmB0LFQYAAAAQAAAAgA4AAIAOAAALAAAACwBBvB0LASwAQcgdCyECAAAAGgAAAH4AbABpAGIALwBhAHIAcgBhAHkALgB0AHMAQewdCwEcAEH4HQsBAQBBjB4LATwAQZgeCysCAAAAJAAAAH4AbABpAGIALwB0AHkAcABlAGQAYQByAHIAYQB5AC4AdABzAEHMHgsBPABB2B4LMQIAAAAqAAAAdgBpAGQAdQBrAGkAOgB3AHIAYQBwAC0AcABlAHAAcABlAHIAOgB2ADEAQYwfCwE8AEGYHwstAgAAACYAAAB+AGwAaQBiAC8AcwB0AGEAdABpAGMAYQByAHIAYQB5AC4AdABzAEHMHwsBLABB2B8LIwIAAAAcAAAAdgBpAGQAdQBrAGkAOgB3AHIAYQBwADoAdgAxAEGAIAsqCgAAACAAAAAgAAAAIAAAAAAAAABBAAAAAkEAAEIAAAACCQAAAgEAACQB"
 
     @Volatile
     private var makimaModule: WasmModule? = null
 
     @Volatile
     private var makimaExports: MakimaExports? = null
+
+    @Volatile
+    private var cachedVidukiServers: List<VidukiServer>? = null
 
     private fun getOrLoadMakimaModule(client: OkHttpClient): Pair<WasmModule, MakimaExports>? {
         makimaModule?.let { mod ->
@@ -632,45 +645,116 @@ object OneShowsWasmEngine {
                 }
             }
 
+            var loadedModule: WasmModule? = null
+            var exports = MakimaExports()
+
             try {
                 val manReq = Request.Builder()
                     .url("https://www.viduki.net/makima-manifest.json")
                     .header("Referer", "https://www.viduki.net/")
                     .header("User-Agent", USER_AGENT)
                     .build()
-                val manBody = client.newCall(manReq).execute().use { it.body?.string().orEmpty() }
-                val manObj = json.parseToJsonElement(manBody).jsonObject
-                val wasmRelUrl = manObj["url"]?.jsonPrimitive?.content ?: "/makima.a0d5c2ffd2859979.wasm"
-                val expObj = manObj["exports"]?.jsonObject ?: return null
+                val manResp = client.newCall(manReq).execute()
+                if (manResp.isSuccessful) {
+                    val manBody = manResp.body?.string().orEmpty()
+                    val manObj = json.parseToJsonElement(manBody).jsonObject
+                    val wasmRelUrl = manObj["url"]?.jsonPrimitive?.content ?: "/makima.2d8bf5c708fc07e2.wasm"
+                    val expObj = manObj["exports"]?.jsonObject
 
-                val exports = MakimaExports(
-                    alloc = expObj["alloc"]?.jsonPrimitive?.content ?: "_gGry",
-                    reset = expObj["reset"]?.jsonPrimitive?.content ?: "_kuez",
-                    writeByte = expObj["writeByte"]?.jsonPrimitive?.content ?: "_0SGL",
-                    readByte = expObj["readByte"]?.jsonPrimitive?.content ?: "_4vLu",
-                    decryptPepper = expObj["decryptPepper"]?.jsonPrimitive?.content ?: "_iUeM",
-                    decryptEnvelope = expObj["decryptEnvelope"]?.jsonPrimitive?.content ?: "_kGtw"
-                )
+                    val allocName = expObj?.get("alloc")?.jsonPrimitive?.content ?: "_pRhU"
+                    val resetName = expObj?.get("reset")?.jsonPrimitive?.content ?: "_twc7"
+                    val writeByteName = expObj?.get("writeByte")?.jsonPrimitive?.content ?: "_sywi"
+                    val readByteName = expObj?.get("readByte")?.jsonPrimitive?.content ?: "_S02C"
+                    val decPepperName = expObj?.get("decryptPepper")?.jsonPrimitive?.content ?: "_Uk9g"
+                    val decEnvName = expObj?.get("decryptEnvelope")?.jsonPrimitive?.content ?: "_KejE"
+                    val dropPepName = expObj?.get("dropPepper")?.jsonPrimitive?.content ?: "_9nwS"
 
-                val wasmFullUrl = if (wasmRelUrl.startsWith("http")) wasmRelUrl else "https://www.viduki.net$wasmRelUrl"
-                val wasmReq = Request.Builder()
-                    .url(wasmFullUrl)
-                    .header("Referer", "https://www.viduki.net/")
-                    .header("User-Agent", USER_AGENT)
-                    .build()
-                val wasmBytes = client.newCall(wasmReq).execute().use { it.body!!.bytes() }
-                val module = Parser.parse(ByteArrayInputStream(wasmBytes))
+                    exports = MakimaExports(allocName, resetName, writeByteName, readByteName, decPepperName, decEnvName, dropPepName)
 
-                makimaModule = module
-                makimaExports = exports
-                return module to exports
+                    val wasmFullUrl = if (wasmRelUrl.startsWith("http")) wasmRelUrl else "https://www.viduki.net$wasmRelUrl"
+                    val wasmReq = Request.Builder()
+                        .url(wasmFullUrl)
+                        .header("Referer", "https://www.viduki.net/")
+                        .header("User-Agent", USER_AGENT)
+                        .build()
+                    val wasmResp = client.newCall(wasmReq).execute()
+                    if (wasmResp.isSuccessful) {
+                        val wasmBytes = wasmResp.body?.bytes()
+                        if (wasmBytes != null && wasmBytes.isNotEmpty()) {
+                            loadedModule = Parser.parse(ByteArrayInputStream(wasmBytes))
+                        }
+                    }
+                }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
-                safeLog("OneShowsWasmEngine", "getOrLoadMakimaModule error: ${t.message}", t)
-                return null
+                safeLog("OneShowsWasmEngine", "getOrLoadMakimaModule live fetch error: ${t.message}", t)
             }
+
+            if (loadedModule == null) {
+                try {
+                    val b64Bytes = Base64.getDecoder().decode(VIDUKI_WASM_B64)
+                    loadedModule = Parser.parse(ByteArrayInputStream(b64Bytes))
+                    exports = MakimaExports()
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    safeLog("OneShowsWasmEngine", "getOrLoadMakimaModule embedded fallback error: ${t.message}", t)
+                    return null
+                }
+            }
+
+            val finalMod = loadedModule ?: return null
+            makimaModule = finalMod
+            makimaExports = exports
+            return finalMod to exports
         }
+    }
+
+    suspend fun fetchVidukiServers(client: OkHttpClient): List<VidukiServer> = withContext(Dispatchers.IO) {
+        cachedVidukiServers?.let { return@withContext it }
+        try {
+            val req = Request.Builder()
+                .url("https://api.viduki.net/main/servers")
+                .header("Referer", "https://www.viduki.net/")
+                .header("Origin", "https://www.viduki.net")
+                .header("Accept", "application/json")
+                .header("User-Agent", USER_AGENT)
+                .build()
+            val body = client.newCall(req).execute().use { it.body?.string().orEmpty() }
+            if (body.startsWith("[")) {
+                val arr = json.parseToJsonElement(body).jsonArray
+                val list = arr.mapNotNull { elem ->
+                    val obj = elem.jsonObject
+                    val name = obj["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+                    val lang = obj["language"]?.jsonPrimitive?.contentOrNull ?: "ENGLISH"
+                    VidukiServer(name, lang)
+                }
+                if (list.isNotEmpty()) {
+                    cachedVidukiServers = list
+                    return@withContext list
+                }
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            safeLog("OneShowsWasmEngine", "fetchVidukiServers error: ${t.message}", t)
+        }
+        val fallback = listOf(
+            VidukiServer("Chris", "HINDI"),
+            VidukiServer("Wesker", "HINDI"),
+            VidukiServer("Grace", "HINDI"),
+            VidukiServer("Leon", "ENGLISH"),
+            VidukiServer("Jill", "ENGLISH"),
+            VidukiServer("Ada", "ENGLISH"),
+            VidukiServer("Claire", "ENGLISH"),
+            VidukiServer("Rebecca", "ENGLISH"),
+            VidukiServer("Sherry", "ENGLISH"),
+            VidukiServer("Ethan", "ENGLISH"),
+            VidukiServer("Ashley", "VIETNAM")
+        )
+        cachedVidukiServers = fallback
+        fallback
     }
 
     suspend fun decryptVidukiMainStream(
@@ -698,27 +782,18 @@ object OneShowsWasmEngine {
                 .build()
 
             val alloc = instance.export(exports.alloc)
-            val reset = instance.export(exports.reset)
-            val writeByte = instance.export(exports.writeByte)
-            val readByte = instance.export(exports.readByte)
             val decryptPepper = instance.export(exports.decryptPepper)
             val decryptEnvelope = instance.export(exports.decryptEnvelope)
             val memory = instance.memory()
 
-            fun writeBuf(bytes: ByteArray): Int {
+            fun allocAndWrite(bytes: ByteArray): Int {
                 val ptr = alloc.apply(bytes.size.toLong())[0].toInt()
-                for (i in bytes.indices) {
-                    writeByte.apply(ptr.toLong(), i.toLong(), (bytes[i].toInt() and 0xFF).toLong())
-                }
+                memory.write(ptr, bytes)
                 return ptr
             }
 
-            fun readBuf(ptr: Int, len: Int): ByteArray {
-                val out = ByteArray(len)
-                for (i in 0 until len) {
-                    out[i] = readByte.apply(ptr.toLong(), i.toLong())[0].toByte()
-                }
-                return out
+            fun readBytesFromMemory(ptr: Int, len: Int): ByteArray {
+                return memory.readBytes(ptr, len)
             }
 
             // Pepper handshake
@@ -754,15 +829,14 @@ object OneShowsWasmEngine {
             val pepCt = hexToBytes(pepObj["ct"]?.jsonPrimitive?.content ?: return@withContext null)
             val pepTag = hexToBytes(pepObj["tag"]?.jsonPrimitive?.content ?: return@withContext null)
 
-            reset.apply()
             val nonceBytes = hexToBytes(nonce)
             val bucketBuf = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN).putLong(bucket).array()
 
-            val pNonce = writeBuf(nonceBytes)
-            val pBucket = writeBuf(bucketBuf)
-            val pIv = writeBuf(pepIv)
-            val pCt = writeBuf(pepCt)
-            val pTag = writeBuf(pepTag)
+            val pNonce = allocAndWrite(nonceBytes)
+            val pBucket = allocAndWrite(bucketBuf)
+            val pIv = allocAndWrite(pepIv)
+            val pCt = allocAndWrite(pepCt)
+            val pTag = allocAndWrite(pepTag)
 
             val pepRes = decryptPepper.apply(
                 pNonce.toLong(), nonceBytes.size.toLong(),
@@ -796,7 +870,7 @@ object OneShowsWasmEngine {
             if (streamBody.isBlank()) return@withContext null
 
             val sObj = json.parseToJsonElement(streamBody).jsonObject
-            if (sObj.containsKey("stream")) {
+            if (sObj.containsKey("stream") || sObj.containsKey("links")) {
                 return@withContext streamBody
             }
 
@@ -818,17 +892,16 @@ object OneShowsWasmEngine {
             val wkBytes = hexToBytes(wkHex)
             val ctBytes = hexToBytes(ctHex)
 
-            reset.apply()
-            val pCN = writeBuf(cnBytes)
-            val pSN = writeBuf(snBytes)
-            val pTB = writeBuf(tbBuf)
-            val pReqId = writeBuf(reqIdBytes)
-            val pIv2 = writeBuf(iv2Bytes)
-            val pWk = writeBuf(wkBytes)
-            val pTag2 = writeBuf(tag2Bytes)
-            val pIv1 = writeBuf(iv1Bytes)
-            val pSCt = writeBuf(ctBytes)
-            val pTag1 = writeBuf(tag1Bytes)
+            val pCN = allocAndWrite(cnBytes)
+            val pSN = allocAndWrite(snBytes)
+            val pTB = allocAndWrite(tbBuf)
+            val pReqId = allocAndWrite(reqIdBytes)
+            val pIv2 = allocAndWrite(iv2Bytes)
+            val pWk = allocAndWrite(wkBytes)
+            val pTag2 = allocAndWrite(tag2Bytes)
+            val pIv1 = allocAndWrite(iv1Bytes)
+            val pSCt = allocAndWrite(ctBytes)
+            val pTag1 = allocAndWrite(tag1Bytes)
             val pOut = alloc.apply(ctBytes.size.toLong())[0].toInt()
 
             val outLen = decryptEnvelope.apply(
@@ -846,7 +919,7 @@ object OneShowsWasmEngine {
             )[0].toInt()
 
             if (outLen <= 0) return@withContext null
-            val decBytes = readBuf(pOut, outLen)
+            val decBytes = readBytesFromMemory(pOut, outLen)
             String(decBytes, Charsets.UTF_8)
         } catch (ce: CancellationException) {
             throw ce
@@ -856,9 +929,43 @@ object OneShowsWasmEngine {
         }
     }
 
+    suspend fun requestVidukiStream(
+        client: OkHttpClient,
+        serverName: String,
+        isTv: Boolean,
+        tmdbId: String,
+        season: Int = 1,
+        episode: Int = 1
+    ): String? = withContext(Dispatchers.IO) {
+        val baseUrl = "https://api.viduki.net"
+        val nonce = getVidukiSessionNonce(client, baseUrl) ?: return@withContext null
+        val path = if (isTv) "/main/tv/$tmdbId/$season/$episode?srv=$serverName" else "/main/movie/$tmdbId?srv=$serverName"
+        val res = decryptVidukiMainStream(client, baseUrl, nonce, path)
+        if (res != null) {
+            try {
+                val obj = json.parseToJsonElement(res).jsonObject
+                obj["stream"]?.jsonObject?.get("url")?.jsonPrimitive?.contentOrNull
+            } catch (_: Throwable) { null }
+        } else null
+    }
+
+    suspend fun requestVidukiPremiumEmbeds(
+        client: OkHttpClient,
+        isTv: Boolean,
+        tmdbId: String,
+        season: Int = 1,
+        episode: Int = 1
+    ): String? = withContext(Dispatchers.IO) {
+        val baseUrl = "https://api.viduki.net"
+        val nonce = getVidukiSessionNonce(client, baseUrl) ?: return@withContext null
+        val path = if (isTv) "/premium_embeds/tv/$tmdbId/$season/$episode" else "/premium_embeds/movie/$tmdbId"
+        decryptVidukiMainStream(client, baseUrl, nonce, path)
+    }
+
     fun prewarm(client: OkHttpClient) {
         try {
             getOrLoadMakimaDLModule(client)
+            getOrLoadMakimaModule(client)
         } catch (_: Throwable) {}
     }
 }
