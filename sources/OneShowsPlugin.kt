@@ -104,7 +104,7 @@ class OneShowsPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "1shows",
         name = "1Shows",
-        version = 5,
+        version = 6,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.OneShowsPlugin",
