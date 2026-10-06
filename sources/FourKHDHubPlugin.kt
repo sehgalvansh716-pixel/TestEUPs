@@ -83,7 +83,7 @@ class FourKHDHubPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "4khdhub",
         name = "4KHDHub",
-        version = 8,
+        version = 9,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FourKHDHubPlugin",
@@ -478,25 +478,29 @@ class FourKHDHubPlugin(
                    pageUrl.contains("-series-", ignoreCase = true)
 
         val reQ = Regex("""(2160p|4k|1080p|720p|480p)""", RegexOption.IGNORE_CASE)
-        val reSeason = Regex("""(?:S|Season\s*)0?(\d{1,2})""", RegexOption.IGNORE_CASE)
-        val reEp = Regex("""(?:E|Episode\s*|EP\s*)0?(\d{1,3})""", RegexOption.IGNORE_CASE)
+        val reSeason = Regex("""(?:S|Season[-\s]*)0?(\d{1,2})""", RegexOption.IGNORE_CASE)
+        val reEp = Regex("""(?:E|Episode[-\s]*|EP[-\s]*)0?(\d{1,3})""", RegexOption.IGNORE_CASE)
         val reSize = Regex("""(\d+(?:\.\d+)?\s?(?:GB|MB))""", RegexOption.IGNORE_CASE)
 
         val dlGroups = mutableListOf<DlGroup>()
 
-        // 1. Scan `.download-item` blocks containing episode file titles or PSA episode badges
-        val episodeItems = doc.select(".download-item:has(.episode-file-title), .download-item:has(.badge-psa), .download-item:has(.episode-links), .episode-download-item")
+        // 1. Scan episodic items (.episode-download-item) directly for TV series
+        val episodeItems = doc.select(".episode-download-item")
         for (item in episodeItems) {
             val itemHead = item.selectFirst(".episode-file-title")?.text()?.trim()
                 ?: item.selectFirst(".file-title")?.text()?.trim() ?: ""
             val badgePsa = item.selectFirst(".badge-psa")?.text()?.trim() ?: ""
             val badgeSize = item.selectFirst(".badge-size")?.text()?.trim()
             val epNumHead = item.selectFirst(".episode-number")?.text()?.trim() ?: ""
-            val combined = "$itemHead $badgePsa $epNumHead"
+            
+            val parentHeader = item.parents().firstOrNull { it.hasClass("download-item") }
+                ?.selectFirst(".download-header, .season-title")?.text()?.trim().orEmpty()
+            val combined = "$itemHead $badgePsa $epNumHead $parentHeader"
 
             val qMatch = reQ.find(combined)?.value?.lowercase() ?: "1080p"
             val height = when (qMatch) { "2160p", "4k" -> 2160; "1080p" -> 1080; "720p" -> 720; else -> 1080 }
-            val seasonNum = reSeason.find(epNumHead)?.groupValues?.get(1)?.toIntOrNull()
+            val seasonNum = reSeason.find(parentHeader)?.groupValues?.get(1)?.toIntOrNull()
+                ?: reSeason.find(epNumHead)?.groupValues?.get(1)?.toIntOrNull()
                 ?: reSeason.find(combined)?.groupValues?.get(1)?.toIntOrNull() ?: 1
             val epNum = reEp.find(badgePsa)?.groupValues?.get(1)?.toIntOrNull()
                 ?: reEp.find(combined)?.groupValues?.get(1)?.toIntOrNull()
@@ -510,6 +514,9 @@ class FourKHDHubPlugin(
                 val href = a.absUrl("href")
                 if (href.isBlank() || SiteConfig.BLOCKED_HOSTS.any { href.contains(it) }) return@mapNotNull null
                 val label = a.text().trim().ifBlank { a.attr("title").ifBlank { "Download Mirror" } }
+                if (label.contains("Login", ignoreCase = true) || label.contains("VPN", ignoreCase = true) || label.contains("Telegram", ignoreCase = true)) {
+                    return@mapNotNull null
+                }
                 DlLink(label = label, url = href, episode = epNum)
             }.distinctBy { it.url }
 
@@ -529,29 +536,40 @@ class FourKHDHubPlugin(
             }
         }
 
-        // 2. Scan `.file-title` blocks (Modern 4KHDHub Tailwind DOM / Movies / Full Season Packs)
-        // Exclude file-title elements that were already part of an episode download-item above
-        val fileTitles = doc.select(".file-title").filter { ft ->
-            ft.parents().none { it.hasClass("download-item") && (it.selectFirst(".episode-file-title") != null || it.selectFirst(".badge-psa") != null) }
+        // 2. Scan movie / full season pack .download-item containers that do not contain .episode-download-item
+        val movieOrPackItems = doc.select(".download-item").filter { item ->
+            item.selectFirst(".episode-download-item") == null
         }
-        for (ft in fileTitles) {
-            val head = ft.text().trim()
-            val qMatch = reQ.find(head)?.value?.lowercase() ?: "1080p"
-            val height = when (qMatch) { "2160p", "4k" -> 2160; "1080p" -> 1080; "720p" -> 720; else -> 480 }
-            val seasonNum = reSeason.find(head)?.groupValues?.get(1)?.toIntOrNull() ?: 1
-            val isHdr = Regex("""HDR|DV|Dolby\s*Vision""", RegexOption.IGNORE_CASE).containsMatchIn(head)
-            val is10Bit = Regex("""10[-\s]?bit""", RegexOption.IGNORE_CASE).containsMatchIn(head)
-            val isHevc = Regex("""HEVC|x265|H\.?265""", RegexOption.IGNORE_CASE).containsMatchIn(head)
-            val size = reSize.find(head)?.value
+        for (item in movieOrPackItems) {
+            val fileTitleElem = item.selectFirst(".file-title")
+            val head = fileTitleElem?.text()?.trim()
+                ?: item.selectFirst(".download-header")?.text()?.trim().orEmpty()
+            if (head.isBlank()) continue
 
-            // Parent container hosting download buttons
-            val parent = ft.parent() ?: ft
-            val links = parent.select("a[href]").mapNotNull { a ->
+            val headerText = item.selectFirst(".download-header")?.text()?.trim().orEmpty()
+            val combined = "$head $headerText"
+
+            val qMatch = reQ.find(combined)?.value?.lowercase() ?: "1080p"
+            val height = when (qMatch) { "2160p", "4k" -> 2160; "1080p" -> 1080; "720p" -> 720; else -> 1080 }
+            val seasonNum = reSeason.find(combined)?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            val isHdr = Regex("""HDR|DV|Dolby\s*Vision""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+            val is10Bit = Regex("""10[-\s]?bit""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+            val isHevc = Regex("""HEVC|x265|H\.?265""", RegexOption.IGNORE_CASE).containsMatchIn(combined)
+            
+            val badgeSize = item.selectFirst(".badge-size")?.text()?.trim()
+            val headerBadgeSize = item.select(".download-header .badge, .badge").map { it.text().trim() }
+                .firstOrNull { reSize.matches(it) }
+            val size = badgeSize ?: headerBadgeSize ?: reSize.find(combined)?.value
+
+            val links = item.select("a[href]").mapNotNull { a ->
                 val href = a.absUrl("href")
                 if (href.isBlank() || SiteConfig.BLOCKED_HOSTS.any { href.contains(it) }) return@mapNotNull null
                 val label = a.text().trim().ifBlank { a.attr("title").ifBlank { "Download Mirror" } }
+                if (label.contains("Login", ignoreCase = true) || label.contains("VPN", ignoreCase = true) || label.contains("Telegram", ignoreCase = true)) {
+                    return@mapNotNull null
+                }
                 val epMatch = reEp.find(label)?.groupValues?.get(1)?.toIntOrNull()
-                    ?: reEp.find(head)?.groupValues?.get(1)?.toIntOrNull()
+                    ?: reEp.find(combined)?.groupValues?.get(1)?.toIntOrNull()
                 DlLink(label = label, url = href, episode = epMatch)
             }.distinctBy { it.url }
 
@@ -845,66 +863,70 @@ class FourKHDHubPlugin(
             ?.sortedWith(compareByDescending<DlGroup> { it.height }.thenByDescending { it.isHdr })
             ?: emptyList()
 
-        val options = mutableListOf<DownloadOption>()
-        val emittedUrls = mutableSetOf<String>()
+        val options = Collections.synchronizedList(mutableListOf<DownloadOption>())
+        val emittedUrls = Collections.synchronizedSet(HashSet<String>())
+        val concurrencyGate = Semaphore(4)
 
-        for (g in groups) {
-            val linksToTest = if (eParam == null) g.links else {
-                val exact = g.links.filter { it.episode == eParam }
-                if (exact.isNotEmpty()) exact else g.links.filter { it.episode == null }
-            }
+        coroutineScope {
+            for (g in groups) {
+                val linksToTest = if (eParam == null) g.links else {
+                    val exact = g.links.filter { it.episode == eParam }
+                    if (exact.isNotEmpty()) exact else g.links.filter { it.episode == null }
+                }
 
-            for (dl in linksToTest.take(2)) {
-                try {
-                    val candidates = resolveIntermediary(dl.url, eParam)
-                    for (cand in candidates.take(2)) {
-                        val probe = verifyStream(cand) ?: continue
-                        if (emittedUrls.add(probe.url)) {
-                            val qualityLabel = buildString {
-                                append("${g.height}p")
-                                if (g.isHdr) append(" HDR")
-                                if (g.isHevc) append(" HEVC")
-                            }
-                            val ref = cand.referer ?: if (probe.url.contains("valentine.guru") || probe.url.contains("cocktail.beer") || probe.url.contains("gamerxyt")) "https://gamerxyt.com/" else null
-                            val headersMap = buildMap {
-                                put("User-Agent", defaultUserAgent)
-                                put("Accept-Ranges", "bytes")
-                                if (ref != null) put("Referer", ref)
-                            }
-                            options.add(
-                                DownloadOption(
-                                    title = "${cand.label} [$qualityLabel]",
-                                    quality = qualityLabel,
-                                    size = g.size ?: "~2.5 GB",
-                                    url = probe.url,
-                                    source = cand.label,
-                                    provider = name,
-                                    headers = headersMap
-                                )
-                            )
+                for (dl in linksToTest.take(2)) {
+                    launch {
+                        concurrencyGate.withPermit {
+                            try {
+                                val candidates = resolveIntermediary(dl.url, eParam)
+                                val downloadCandidates = candidates.filter { it.kind != MirrorKind.HBPLAY }
+                                for (cand in downloadCandidates) {
+                                    if (emittedUrls.add(cand.url)) {
+                                        val qualityLabel = buildString {
+                                            append("${g.height}p")
+                                            if (g.isHdr) append(" HDR")
+                                            if (g.isHevc) append(" HEVC")
+                                        }
+                                        val headersMap = buildMap {
+                                            put("User-Agent", defaultUserAgent)
+                                            put("Accept-Ranges", "bytes")
+                                            when (cand.kind) {
+                                                MirrorKind.R2 -> {
+                                                    // Do NOT send Referer to pre-signed S3 / R2 URLs
+                                                }
+                                                MirrorKind.FSL_V2 -> {
+                                                    put("Referer", "https://gamerxyt.com/")
+                                                    put("Origin", "https://gamerxyt.com")
+                                                }
+                                                MirrorKind.FAST_10GBPS -> {
+                                                    put("Referer", "https://gamerxyt.com/")
+                                                }
+                                                else -> {
+                                                    cand.referer?.let { put("Referer", it) }
+                                                }
+                                            }
+                                        }
+                                        options.add(
+                                            DownloadOption(
+                                                title = "${cand.label} [$qualityLabel]",
+                                                quality = qualityLabel,
+                                                size = g.size ?: "~2.5 GB",
+                                                url = cand.url,
+                                                source = cand.label,
+                                                provider = name,
+                                                headers = headersMap
+                                            )
+                                        )
+                                    }
+                                }
+                            } catch (_: Throwable) {}
                         }
                     }
-                } catch (_: Throwable) {}
+                }
             }
-            if (options.size >= 4) break
         }
 
-        if (options.isNotEmpty()) {
-            return@withContext options.distinctBy { it.url }
-        }
-
-        val streamResult = getStreamLinks(episodeData)
-        streamResult.streams.map { s ->
-            DownloadOption(
-                title = "${s.serverName} [${s.quality}]",
-                quality = s.quality,
-                size = "~2.5 GB",
-                url = s.url,
-                source = s.serverName,
-                provider = name,
-                headers = s.headers
-            )
-        }
+        options.distinctBy { it.url }
     }
 
     // ───────────────────────────── Intermediary Cloud Resolver ─────────────────────────────
@@ -976,9 +998,11 @@ class FourKHDHubPlugin(
     private fun resolveHubCloud(url: String): String? {
         val domainsToTry = mutableListOf<String>()
         val uri = try { java.net.URI(url) } catch (_: Exception) { null }
-        if (uri?.host != null) domainsToTry.add(uri.host)
-        listOf("hubcloud.dad", "hubcloud.one", "hubcloud.art", "hubcloud.club", "hubcloud.link").forEach {
+        listOf("hubcloud.club", "hubcloud.one", "hubcloud.ist", "hubcloud.dad", "hubcloud.art", "hubcloud.link").forEach {
             if (!domainsToTry.contains(it)) domainsToTry.add(it)
+        }
+        if (uri?.host != null && !domainsToTry.contains(uri.host)) {
+            domainsToTry.add(uri.host)
         }
 
         for (host in domainsToTry) {
@@ -1035,6 +1059,9 @@ class FourKHDHubPlugin(
                     labelLower.contains("10gbps") || hrefLower.contains("gpdl.hubcloud") -> {
                         candidates.add(MirrorCandidate(href, "10Gbps Multi-Threaded", MirrorKind.FAST_10GBPS, "https://gamerxyt.com/"))
                     }
+                    hrefLower.contains("workers.dev") || labelLower.contains("download file") -> {
+                        candidates.add(MirrorCandidate(href, "Cloudflare Worker Direct", MirrorKind.R2, null))
+                    }
                     hrefLower.contains("hbplay.pages.dev") && hrefLower.contains("?u=") -> {
                         val uParam = href.toHttpUrlOrNull()?.queryParameter("u")
                         if (uParam != null) {
@@ -1046,11 +1073,14 @@ class FourKHDHubPlugin(
                             } catch (_: Throwable) {}
                         }
                     }
-                    hrefLower.contains("pixeldrain.com") -> {
+                    hrefLower.contains("pixeldrain.") -> {
                         val fileId = Regex("""/(?:u|api/file)/([A-Za-z0-9]+)""").find(href)?.groupValues?.get(1)
                         if (fileId != null) {
                             candidates.add(MirrorCandidate("https://pixeldrain.com/api/file/$fileId", "PixelDrain Direct", MirrorKind.PIXELDRAIN, null))
                         }
+                    }
+                    hrefLower.contains("fuckingfast.net") || labelLower.contains("buzz server") -> {
+                        candidates.add(MirrorCandidate(href, "Buzz Server Direct", MirrorKind.OTHER, null))
                     }
                     hrefLower.endsWith(".mkv") || hrefLower.endsWith(".mp4") -> {
                         candidates.add(MirrorCandidate(href, text.ifBlank { "Fast Server" }, MirrorKind.OTHER, "https://gamerxyt.com/"))
