@@ -104,7 +104,7 @@ class OneShowsPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "1shows",
         name = "1Shows",
-        version = 7,
+        version = 8,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.OneShowsPlugin",
@@ -914,7 +914,7 @@ class OneShowsPlugin(
 
         // 7. Server Group 4: Viduki Main Multi-Server HLS Streaming (Chris/Wesker/Grace HINDI, Leon/Jill/Ada ENGLISH, Ashley VIETNAMESE)
         launch {
-            withTimeoutOrNull(4500L) {
+            withTimeoutOrNull(7000L) {
                 try {
                     val vidukiServers = OneShowsWasmEngine.fetchVidukiServers(http.meta)
                     val priorityServers = vidukiServers.filter {
@@ -924,7 +924,7 @@ class OneShowsPlugin(
                     coroutineScope {
                         for (srv in priorityServers) {
                             launch {
-                                withTimeoutOrNull(3500L) {
+                                withTimeoutOrNull(5000L) {
                                     try {
                                         val srvStreamUrl = OneShowsWasmEngine.requestVidukiStream(
                                             http.meta,
@@ -1027,9 +1027,213 @@ class OneShowsPlugin(
             }
         }
 
-        // 8. Server Group 5: Viduki Premium Embeds (Plasma Multi-Audio HLS [Hindi + English] & Dexter)
+        // 8. Server Group 5: Viduki Dexter Multi-Node HLS Cluster (TIK 1, VIP 1, FIL 1 - AES-256-GCM Unpacked)
         launch {
-            withTimeoutOrNull(4500L) {
+            withTimeoutOrNull(7000L) {
+                try {
+                    val dexterStreams = OneShowsWasmEngine.resolveDexterStreams(
+                        http.meta,
+                        isTv,
+                        tmdbId,
+                        season ?: 1,
+                        episode ?: 1
+                    )
+                    for (dx in dexterStreams) {
+                        val dxHeaders = mapOf(
+                            "Referer" to "https://play.xpass.top/",
+                            "Origin" to "https://play.xpass.top",
+                            "User-Agent" to defaultHeaders["User-Agent"]!!
+                        )
+                        val sourceId = "1shows:viduki:dexter:${dx.serverName.hashCode()}:$tmdbId"
+                        val eupSource = EupStreamSource(
+                            id = sourceId,
+                            serverId = "viduki_dexter_${dx.serverName.take(10).replace(" ", "_")}",
+                            serverLabel = "Dexter ${dx.serverName} (1080p Master HLS)",
+                            url = dx.masterHlsUrl,
+                            kind = StreamKind.HLS,
+                            headers = HeaderPolicy(sticky = dxHeaders),
+                            video = VideoInfo(height = 1080),
+                            audioTracks = listOf(EupAudioTrackDescriptor("English (Default)", "en", true, "aac", 2)),
+                            introOffsetMs = introOffsetMs,
+                            expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
+                            refreshHandle = "v1|1|viduki_dexter_${dx.serverName.take(10)}"
+                        )
+                        sourceEntries[sourceId] = CachedSourceEntry(
+                            tmdbId = tmdbId,
+                            isTv = isTv,
+                            season = season,
+                            episode = episode,
+                            serverId = dx.serverName,
+                            gen = 1,
+                            realUrl = dx.masterHlsUrl,
+                            realSource = eupSource,
+                            expiresAtMs = System.currentTimeMillis() + (30 * 60_000L)
+                        )
+                        val legSource = CoreStreamSource(
+                            url = dx.masterHlsUrl,
+                            serverName = "Viduki Dexter (${dx.serverName})",
+                            resolutionLabel = "1080p FHD",
+                            quality = "1Shows Viduki Dexter ${dx.serverName} [1080p Master HLS]",
+                            isM3u8 = true,
+                            audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
+                            releaseType = AudioReleaseType.ORIGINAL,
+                            headers = dxHeaders
+                        )
+                        if (emittedStreamKeys.add(dx.masterHlsUrl)) {
+                            send(StreamEmission.SourceFound(legSource))
+                        }
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    safeLog("OneShowsPlugin", "Dexter stream resolution error: ${t.message}", t)
+                }
+            }
+        }
+
+        // 9. Server Group 6: Vidzee Decrypted Multi-Language HLS Cluster (Wasm Decrypted: Dcloud, IPcloud, Acme Hindi/English, Stream Hindi/English)
+        launch {
+            withTimeoutOrNull(7500L) {
+                try {
+                    val vzBase = "https://core.vidzee.wtf"
+                    val vzHeaders = mapOf(
+                        "Referer" to "https://player.vidzee.wtf/",
+                        "User-Agent" to defaultHeaders["User-Agent"]!!
+                    )
+                    val langPath = if (isTv && season != null && episode != null) {
+                        "/streams/languages/tv/$tmdbId/$season/$episode"
+                    } else {
+                        "/streams/languages/movie/$tmdbId"
+                    }
+                    val langReqBuilder = Request.Builder().url("$vzBase$langPath")
+                    vzHeaders.forEach { (k, v) -> langReqBuilder.header(k, v) }
+                    val langReq = langReqBuilder.build()
+                    val langJson = http.meta.newCall(langReq).execute().use { it.body?.string().orEmpty() }
+                    val dynamicLangs = mutableListOf("Hindi", "English")
+                    if (langJson.isNotBlank()) {
+                        try {
+                            val lObj = json.parseToJsonElement(langJson).jsonObject
+                            val lArr = lObj["languages"]?.jsonArray
+                            if (lArr != null) {
+                                for (lElem in lArr) {
+                                    val lStr = lElem.jsonPrimitive.contentOrNull
+                                    if (!lStr.isNullOrBlank() && !dynamicLangs.contains(lStr)) {
+                                        dynamicLangs.add(lStr)
+                                    }
+                                }
+                            }
+                        } catch (_: Throwable) {}
+                    }
+
+                    val serverCandidates = mutableListOf(
+                        "dcloud" to "Dcloud (English)",
+                        "ipcloud" to "IPcloud (English)"
+                    )
+                    for (lng in dynamicLangs) {
+                        serverCandidates.add("v4:$lng" to "Acme ($lng)")
+                        serverCandidates.add("v6:$lng" to "Stream ($lng)")
+                    }
+
+                    coroutineScope {
+                        for ((srvKey, srvLabel) in serverCandidates) {
+                            launch {
+                                withTimeoutOrNull(5000L) {
+                                    try {
+                                        val encSrv = URLEncoder.encode(srvKey, "UTF-8")
+                                        val streamPath = if (isTv && season != null && episode != null) {
+                                            "/streams/tv/$tmdbId/$season/$episode?s=$encSrv&e=1"
+                                        } else {
+                                            "/streams/movie/$tmdbId?s=$encSrv&e=1"
+                                        }
+                                        val stReqBuilder = Request.Builder().url("$vzBase$streamPath")
+                                        vzHeaders.forEach { (k, v) -> stReqBuilder.header(k, v) }
+                                        val stReq = stReqBuilder.build()
+                                        val stResp = http.meta.newCall(stReq).execute().use { it.body?.string().orEmpty() }
+                                        val cMatch = Regex("\"c\":\\s*\"([^\"]+)\"").find(stResp)
+                                        if (cMatch != null) {
+                                            val cStr = cMatch.groupValues[1]
+                                            val decJson = OneShowsWasmEngine.decryptVidzeePayload(http.meta, cStr, "player.vidzee.wtf")
+                                            if (!decJson.isNullOrBlank()) {
+                                                val decObj = json.parseToJsonElement(decJson).jsonObject
+                                                val realStreamUrl = decObj["url"]?.jsonPrimitive?.contentOrNull
+                                                val payloadLang = decObj["language"]?.jsonPrimitive?.contentOrNull ?: "English"
+                                                val extraHeaders = decObj["headers"]?.jsonObject
+
+                                                if (!realStreamUrl.isNullOrBlank() && realStreamUrl.startsWith("http")) {
+                                                    val mergedHeaders = mutableMapOf(
+                                                        "Referer" to "https://player.vidzee.wtf/",
+                                                        "User-Agent" to defaultHeaders["User-Agent"]!!
+                                                    )
+                                                    extraHeaders?.forEach { (hk, hv) ->
+                                                        hv.jsonPrimitive.contentOrNull?.let { mergedHeaders[hk] = it }
+                                                    }
+
+                                                    val isHindi = srvKey.contains("Hindi", ignoreCase = true) || payloadLang.equals("Hindi", ignoreCase = true)
+                                                    val audioLang = if (isHindi) "Hindi" else "English"
+                                                    val iso = if (isHindi) "hi" else "en"
+                                                    val relType = if (isHindi) AudioReleaseType.DUB else AudioReleaseType.ORIGINAL
+
+                                                    val sourceId = "1shows:vidzee:${srvKey.hashCode()}:$tmdbId"
+                                                    val isM3u8 = realStreamUrl.contains(".m3u8", ignoreCase = true)
+
+                                                    val eupSource = EupStreamSource(
+                                                        id = sourceId,
+                                                        serverId = "vidzee_${srvKey.replace(":", "_").lowercase()}",
+                                                        serverLabel = "Vidzee $srvLabel [1080p Master HLS - $audioLang]",
+                                                        url = realStreamUrl,
+                                                        kind = if (isM3u8) StreamKind.HLS else StreamKind.PROGRESSIVE,
+                                                        headers = HeaderPolicy(sticky = mergedHeaders),
+                                                        video = VideoInfo(height = 1080),
+                                                        audioTracks = listOf(EupAudioTrackDescriptor("$audioLang (2ch AAC)", iso, isHindi, "aac", 2)),
+                                                        introOffsetMs = introOffsetMs,
+                                                        expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
+                                                        refreshHandle = "v1|1|vidzee_${srvKey.replace(":", "_")}"
+                                                    )
+                                                    sourceEntries[sourceId] = CachedSourceEntry(
+                                                        tmdbId = tmdbId,
+                                                        isTv = isTv,
+                                                        season = season,
+                                                        episode = episode,
+                                                        serverId = srvKey,
+                                                        gen = 1,
+                                                        realUrl = realStreamUrl,
+                                                        realSource = eupSource,
+                                                        expiresAtMs = System.currentTimeMillis() + (30 * 60_000L)
+                                                    )
+                                                    val legSource = CoreStreamSource(
+                                                        url = realStreamUrl,
+                                                        serverName = "Vidzee ($srvLabel)",
+                                                        resolutionLabel = "1080p FHD",
+                                                        quality = "1Shows Vidzee $srvLabel [1080p FHD - $audioLang]",
+                                                        isM3u8 = isM3u8,
+                                                        audioTracks = listOf(CoreAudioTrackDescriptor(audioLang, iso, 2, "AAC")),
+                                                        releaseType = relType,
+                                                        headers = mergedHeaders
+                                                    )
+                                                    if (emittedStreamKeys.add(realStreamUrl)) {
+                                                        send(StreamEmission.SourceFound(legSource))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch (ce: CancellationException) {
+                                        throw ce
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+                        }
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    safeLog("OneShowsPlugin", "Vidzee multi-language resolution error: ${t.message}", t)
+                }
+            }
+        }
+
+        // 10. Server Group 7: Viduki Premium Embeds (Plasma Multi-Audio HLS [Hindi + English])
+        launch {
+            withTimeoutOrNull(6500L) {
                 try {
                     val premJsonStr = OneShowsWasmEngine.requestVidukiPremiumEmbeds(
                         http.meta,
@@ -1126,63 +1330,6 @@ class OneShowsPlugin(
                                     } catch (ce: CancellationException) {
                                         throw ce
                                     } catch (_: Throwable) {}
-                                } else if (host.equals("dexter", ignoreCase = true)) {
-                                    try {
-                                        val dexterStreams = OneShowsWasmEngine.resolveDexterStreams(
-                                            http.meta,
-                                            isTv,
-                                            tmdbId,
-                                            season ?: 1,
-                                            episode ?: 1
-                                        )
-                                        for (dx in dexterStreams) {
-                                            val dxHeaders = mapOf(
-                                                "Referer" to "https://play.xpass.top/",
-                                                "Origin" to "https://play.xpass.top",
-                                                "User-Agent" to defaultHeaders["User-Agent"]!!
-                                            )
-                                            val sourceId = "1shows:viduki:dexter:${dx.serverName.hashCode()}:$tmdbId"
-                                            val eupSource = EupStreamSource(
-                                                id = sourceId,
-                                                serverId = "viduki_dexter_${dx.serverName.take(10).replace(" ", "_")}",
-                                                serverLabel = "Dexter ${dx.serverName} (1080p Master HLS)",
-                                                url = dx.masterHlsUrl,
-                                                kind = StreamKind.HLS,
-                                                headers = HeaderPolicy(sticky = dxHeaders),
-                                                video = VideoInfo(height = 1080),
-                                                audioTracks = listOf(EupAudioTrackDescriptor("English (Default)", "en", true, "aac", 2)),
-                                                introOffsetMs = introOffsetMs,
-                                                expiresAtEpochMs = System.currentTimeMillis() + (30 * 60_000L),
-                                                refreshHandle = "v1|1|viduki_dexter_${dx.serverName.take(10)}"
-                                            )
-                                            sourceEntries[sourceId] = CachedSourceEntry(
-                                                tmdbId = tmdbId,
-                                                isTv = isTv,
-                                                season = season,
-                                                episode = episode,
-                                                serverId = dx.serverName,
-                                                gen = 1,
-                                                realUrl = dx.masterHlsUrl,
-                                                realSource = eupSource,
-                                                expiresAtMs = System.currentTimeMillis() + (30 * 60_000L)
-                                            )
-                                            val legSource = CoreStreamSource(
-                                                url = dx.masterHlsUrl,
-                                                serverName = "Viduki Dexter (${dx.serverName})",
-                                                resolutionLabel = "1080p FHD",
-                                                quality = "1Shows Viduki Dexter ${dx.serverName} [1080p Master HLS]",
-                                                isM3u8 = true,
-                                                audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "AAC")),
-                                                releaseType = AudioReleaseType.ORIGINAL,
-                                                headers = dxHeaders
-                                            )
-                                            if (emittedStreamKeys.add(dx.masterHlsUrl)) {
-                                                send(StreamEmission.SourceFound(legSource))
-                                            }
-                                        }
-                                    } catch (ce: CancellationException) {
-                                        throw ce
-                                    } catch (_: Throwable) {}
                                 }
                             }
                         }
@@ -1201,7 +1348,7 @@ class OneShowsPlugin(
         val subtitles = mutableListOf<SubtitleTrack>()
 
         try {
-            withTimeout(8_500L) {
+            withTimeout(10_000L) {
                 getStreamFlow(episodeData).collect { emission ->
                     when (emission) {
                         is StreamEmission.SourceFound -> streams.add(emission.source)
