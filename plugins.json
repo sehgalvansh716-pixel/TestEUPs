@@ -15,14 +15,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/bingr.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "8a784d75120b217e40018f11a94017124419a54515d4fb0626268a337adc061d",
+      "sha256": "5d58ec869fee500bad12ee61b2828e2069963a3e1b0a5640fd1dbb0ca1065b7f",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 73183,
+      "fileSize": 73201,
       "isAdult": false,
       "isVault": false
     },
@@ -38,14 +38,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "9028dd5fc018f7cff3fdd41c6c655e3daeadc8b3ba8f9a1f8cd71f27d1518026",
+      "sha256": "fa23e9947808e47c97a2dfc6f2618d84500aa49a07184203f7b8f5042b823af5",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 69552,
+      "fileSize": 69537,
       "isAdult": false,
       "isVault": false
     },
@@ -61,60 +61,60 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d8594d2ac17c36c940373ff60ab04f87a6589542ec192a464f73e744f885edc3",
+      "sha256": "ad7317df218e323d8fb3458aefbf2a65de26e3a49824003fe0d04006c17c99ed",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 139650,
+      "fileSize": 139648,
       "isAdult": false,
       "isVault": false
     },
     {
       "id": "1shows",
       "name": "1Shows",
-      "version": 8,
-      "versionName": "1.7.0",
+      "version": 9,
+      "versionName": "1.8.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://www.1shows.org",
-      "description": "High-speed multi-server streaming with Vidrock, Vidy, Viduki Main (Hindi/English/Vietnamese), Viduki Dexter (TIK/VIP/FIL Master HLS), Vidzee Multi-Language (Dcloud/IPcloud/Acme Hindi/Stream Hindi), Viduki Plasma Dual Audio, and MakimaDL direct CDN (Decoupled EUP).",
+      "description": "High-speed multi-server streaming with studio clear logos, Vidrock, Vidy, Viduki Main (Hindi/English/Vietnamese), Viduki Dexter (TIK/VIP/FIL Master HLS), Vidzee Multi-Language (Dcloud/IPcloud/Acme Hindi/Stream Hindi), Viduki Plasma Dual Audio, and MakimaDL direct CDN (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.OneShowsPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "7af8b4b7ac10290ea3bced8c227166d895173b959175c7ceba61fc086799f917",
+      "sha256": "316b324e233e6b314f485464f9b8c9b38d233ea08827eb460ef2c01dc0c3aa93",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 128622,
+      "fileSize": 128680,
       "isAdult": false,
       "isVault": false
     },
     {
       "id": "4khdhub",
       "name": "4KHDHub",
-      "version": 9,
-      "versionName": "1.5.0",
+      "version": 10,
+      "versionName": "1.6.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://4khdhub.one",
-      "description": "Mastered EUP v2 4K UHD, HDR, episodic series parsing & TMDB bridging, multi-cloud downloads & streaming (Decoupled EUP).",
+      "description": "Mastered EUP v2 4K UHD, HDR, studio clear logos, episodic series parsing & TMDB bridging, multi-cloud downloads & streaming (Decoupled EUP).",
       "className": "com.euthopiar.core.provider.FourKHDHubPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "dfadf60b4c25fb291690c1b08ce38a9c31743d6d5a0c21c7071b56c6cefdbe05",
+      "sha256": "3432bab0ccc2b9168ed0435407034ccf0fe85749164155ecbabbab3d0d38fc3f",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 58645,
+      "fileSize": 59843,
       "isAdult": false,
       "isVault": false
     },
@@ -130,12 +130,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/hqporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "695c13baf4efb9dd30b115fc54993725d84818e7cff12b57f05ab89291400f41",
+      "sha256": "e2da5bf46f610861c5b3c590c7605a60b1bbd03e19b94ea690989b90ce71ba65",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 15725,
+      "fileSize": 15727,
       "isAdult": true,
       "isVault": true
     },
@@ -151,12 +151,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/xvideos.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "ae218474d6c129e53994a9e3c74ce91303642d7963c6687a98d88b7dccbba563",
+      "sha256": "3365f119194f9ff3b67574cf791f70f6863986df6a02d5582101cf32e83a6471",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 16829,
+      "fileSize": 16851,
       "isAdult": true,
       "isVault": true
     },
@@ -172,12 +172,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/eporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "dd67f1af26b462c2162688ab74bc43ccce452ee4c5db19e31f298d772ac9b014",
+      "sha256": "8c63ae017fb820192404c0a52e1b7e5e19392e3af58b7e140436479da29df160",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 26889,
+      "fileSize": 26903,
       "isAdult": true,
       "isVault": true
     },
@@ -193,12 +193,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/rule34video.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d0be928b7d60e6a146fed253822d30928368c72e6c8e46f20672e52d03af9d68",
+      "sha256": "406f2a8b97240d33b697fb4b254ad3ec6a82f1307fe021cfafc9a5439f416de7",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 12614,
+      "fileSize": 12622,
       "isAdult": true,
       "isVault": true
     },
@@ -214,12 +214,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/beeg.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "5e9113326a8f2f905014306bd7ce5d58dae9cf161fa98ec228b2219a92cc857a",
+      "sha256": "f17f176928544b055cbe4f9cb9924324ab080becc2f566f71f9c69857db3200c",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 15794,
+      "fileSize": 15810,
       "isAdult": true,
       "isVault": true
     },
@@ -235,12 +235,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/faphouse.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "50ce43cb21dd09a58bcafff5248b617e1d67dacd9d314d7dffc59847e0cda39c",
+      "sha256": "94dad4be44616ed537d56aae22cc62ad6ef802a31aa280965bcc3065fc33046b",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 16050,
+      "fileSize": 16049,
       "isAdult": true,
       "isVault": true
     }

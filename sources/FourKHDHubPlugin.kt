@@ -10,6 +10,7 @@ import com.euthopiar.core.model.MediaType
 import com.euthopiar.core.model.StreamEmission
 import com.euthopiar.core.model.StreamResult
 import com.euthopiar.core.model.UniversalPlugin
+import com.euthopiar.core.util.TmdbBridge
 import com.euthopiar.core.model.StreamSource as CoreStreamSource
 import com.euthopiar.eup.api.CatalogSection
 import com.euthopiar.eup.api.ContentType
@@ -83,7 +84,7 @@ class FourKHDHubPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "4khdhub",
         name = "4KHDHub",
-        version = 9,
+        version = 10,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FourKHDHubPlugin",
@@ -1193,9 +1194,35 @@ class FourKHDHubPlugin(
         s = s.replace(Regex("""\[.*?\]"""), " ")
         s = s.replace(Regex("""\((?:19|20)\d{2}\)"""), " ")
         s = s.replace(Regex("""\(.*?\)"""), " ")
-        s = s.replace(Regex("""(?i)\b(?:4k|2160p|1080p|720p|480p|uhd|fhd|hd|bluray|blu-ray|web-dl|webrip|brrip|dvdrip|hdtv|remux|hevc|x265|x264|avc|10bit|hdr|dovi|sdr|aac|atmos|ddp|truehd|multi|dual\s*audio|hindi|english|season\s*\d+|s\d+e\d+|series)\b"""), " ")
+        s = s.replace(Regex("""(?i)\b(?:4k|2160p|1080p|720p|480p|uhd|fhd|hd|bluray|blu-ray|web-dl|webrip|brrip|dvdrip|hdtv|remux|hevc|x265|x264|avc|10bit|hdr|dovi|sdr|aac|atmos|ddp|truehd|multi|dual\s*audio|multi\s*audio|hindi|english|telugu|tamil|season\s*\d+|s\d+e\d+|s\d+|series|complete|repack|proper|clean|cleaned|uncut|extended|unrated|imax)\b"""), " ")
         s = s.replace(Regex("""[._-]"""), " ")
-        return s.replace(Regex("""\s+"""), " ").trim()
+        val cleaned = s.replace(Regex("""\s+"""), " ").trim()
+        return if (cleaned.length >= 2) cleaned else raw.replace(Regex("""\[.*?\]|\(.*?\)|[._-]"""), " ").replace(Regex("""\s+"""), " ").trim()
+    }
+
+    private val logoCache = ConcurrentHashMap<String, String>()
+
+    override suspend fun resolveLogo(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
+        val clean = cleanTitle(mediaItem.title)
+        val isTv = mediaItem.type == MediaType.TV_SERIES || mediaItem.type == MediaType.ANIME
+        val tmdbId = if (mediaItem.id.all { it.isDigit() } && mediaItem.id.isNotEmpty()) {
+            mediaItem.id
+        } else {
+            TmdbBridge.searchTmdbId(http.scrape, clean, mediaItem.year, isTv)
+        }
+        if (tmdbId.isNullOrBlank()) return@withContext null
+        logoCache[tmdbId]?.let { return@withContext it }
+
+        val logoUrl = try {
+            TmdbBridge.resolveLogo(http.scrape, tmdbId, isTv)
+        } catch (_: Throwable) { null }
+
+        if (logoUrl != null) {
+            logoCache[tmdbId] = logoUrl
+            logoUrl
+        } else {
+            null
+        }
     }
 
     private fun norm(s: String): String =

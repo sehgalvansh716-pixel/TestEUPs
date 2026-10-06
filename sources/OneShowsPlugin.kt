@@ -104,7 +104,7 @@ class OneShowsPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "1shows",
         name = "1Shows",
-        version = 8,
+        version = 9,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.OneShowsPlugin",
@@ -2072,10 +2072,12 @@ class OneShowsPlugin(
         if (logoUrl != null) {
             logoCache[tmdbId] = logoUrl
             logoUrl
-        } else {
-            val fallback = "https://images.metahub.space/logo/medium/$tmdbId/img.png"
+        } else if (cachedImdb != null && cachedImdb.startsWith("tt")) {
+            val fallback = "https://images.metahub.space/logo/medium/$cachedImdb/img.png"
             logoCache[tmdbId] = fallback
             fallback
+        } else {
+            null
         }
     }
 }
