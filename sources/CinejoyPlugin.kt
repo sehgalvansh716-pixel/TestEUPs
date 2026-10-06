@@ -1361,19 +1361,33 @@ class CinejoyPlugin(
 
                     val videosArr = obj["videos"]?.jsonObject?.get("results")?.jsonArray
                     if (videosArr != null) {
+                        data class Cand(val key: String, val score: Int)
+                        val candidates = mutableListOf<Cand>()
                         for (vElem in videosArr) {
                             val vObj = (vElem as? JsonObject) ?: continue
                             val site = vObj["site"]?.jsonPrimitive?.contentOrNull ?: ""
                             val type = vObj["type"]?.jsonPrimitive?.contentOrNull ?: ""
                             val key = vObj["key"]?.jsonPrimitive?.contentOrNull ?: continue
+                            val official = vObj["official"]?.jsonPrimitive?.booleanOrNull ?: false
+                            val lang = vObj["iso_639_1"]?.jsonPrimitive?.contentOrNull ?: ""
                             val name = vObj["name"]?.jsonPrimitive?.contentOrNull.orEmpty().lowercase()
-                            val isVertical = name.contains("short") || name.contains("#short") || name.contains("vertical") || name.contains("tiktok") || name.contains("reel")
+                            val isVertical = name.contains("short") || name.contains("#short") || name.contains("vertical") || name.contains("tiktok") || name.contains("reel") || name.contains("9:16")
                             if (isVertical) continue
-                            if (site.equals("YouTube", ignoreCase = true) &&
-                                (type.equals("Trailer", ignoreCase = true) || type.equals("Teaser", ignoreCase = true))) {
-                                trailerUrl = "https://www.youtube.com/watch?v=$key"
-                                break
-                            }
+                            if (!site.equals("YouTube", ignoreCase = true)) continue
+                            val isTrailer = type.equals("Trailer", ignoreCase = true)
+                            val isTeaser = type.equals("Teaser", ignoreCase = true)
+                            if (!isTrailer && !isTeaser) continue
+
+                            var sc = if (isTrailer) 1000 else 200
+                            if (official) sc += 500
+                            if (lang.equals("en", ignoreCase = true)) sc += 300
+                            if (name.contains("official trailer")) sc += 250
+                            else if (name.contains("main trailer") || name.contains("final trailer")) sc += 200
+                            else if (name.contains("trailer")) sc += 100
+                            candidates.add(Cand(key, sc))
+                        }
+                        candidates.maxByOrNull { it.score }?.let { best ->
+                            trailerUrl = "https://www.youtube.com/watch?v=${best.key}"
                         }
                     }
 
