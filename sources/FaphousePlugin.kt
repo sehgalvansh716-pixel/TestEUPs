@@ -1,4 +1,4 @@
-﻿package com.euthopiar.core.provider
+package com.euthopiar.core.provider
 
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
@@ -88,10 +88,10 @@ class FaphousePlugin(
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val targetUrl = when {
-            mediaItem.url.startsWith("http") -> mediaItem.url
-            mediaItem.id.startsWith("http") -> mediaItem.id
-            mediaItem.id.startsWith("/") -> "$mainUrl${mediaItem.id}"
-            else -> "$mainUrl/videos/${mediaItem.id}"
+            mediaItem.url.startsWith("http") -> mediaItem.url.substringBefore("#")
+            mediaItem.id.startsWith("http") -> mediaItem.id.substringBefore("#")
+            mediaItem.id.startsWith("/") -> "$mainUrl${mediaItem.id.substringBefore("#")}"
+            else -> "$mainUrl/videos/${mediaItem.id.substringBefore("#")}"
         }
 
         val html = fetchHtml(targetUrl) ?: return@withContext createFallbackDetail(mediaItem)
@@ -120,6 +120,18 @@ class FaphousePlugin(
             val directCdnMatcher = Pattern.compile("""https?://video-nss\.fhcdngroup\.online/[^\s"'<>]+""").matcher(html)
             if (directCdnMatcher.find()) {
                 streamUrl = directCdnMatcher.group(0)?.replace("&amp;", "&")
+            }
+        }
+        if (streamUrl.isNullOrBlank()) {
+            val videoSrcMatcher = Pattern.compile("""<video[^>]+(?:src|data-src)="([^"]+)"""").matcher(html)
+            if (videoSrcMatcher.find()) {
+                streamUrl = videoSrcMatcher.group(1)?.replace("&amp;", "&")
+            }
+        }
+        if (streamUrl.isNullOrBlank()) {
+            val generalSourceMatcher = Pattern.compile("""<source[^>]+src="([^"]+\.mp4[^"]*)"""").matcher(html)
+            if (generalSourceMatcher.find()) {
+                streamUrl = generalSourceMatcher.group(1)?.replace("&amp;", "&")
             }
         }
 
@@ -326,6 +338,7 @@ class FaphousePlugin(
             val urlM = urlPattern.matcher(block)
             if (!urlM.find()) continue
             val relativeUrl = urlM.group(1) ?: continue
+            if (relativeUrl.equals("/videos/vr", ignoreCase = true) || relativeUrl.startsWith("/videos/vr/")) continue
 
             // ID
             val idM = idPattern.matcher(block)

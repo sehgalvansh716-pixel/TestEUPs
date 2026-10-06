@@ -1,4 +1,4 @@
-﻿package com.euthopiar.core.provider
+package com.euthopiar.core.provider
 
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
@@ -196,13 +196,21 @@ class Rule34VideoPlugin(
             "Referer" to "$mainUrl/"
         )
 
+        val quality = when {
+            episodeData.contains("1080") -> "1080p"
+            episodeData.contains("720") -> "720p"
+            episodeData.contains("480") -> "480p"
+            episodeData.contains("360") -> "360p"
+            else -> "HD"
+        }
+
         StreamResult(
             streams = listOf(
                 StreamSource(
                     url = episodeData,
-                    serverName = "Rule34 CDN",
-                    resolutionLabel = "HD",
-                    quality = "HD",
+                    serverName = "Rule34 High-Speed CDN ($quality)",
+                    resolutionLabel = quality,
+                    quality = quality,
                     isM3u8 = episodeData.contains(".m3u8"),
                     headers = streamHeaders
                 )

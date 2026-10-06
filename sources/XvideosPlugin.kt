@@ -1,4 +1,4 @@
-﻿package com.euthopiar.core.provider
+package com.euthopiar.core.provider
 
 import com.euthopiar.core.model.*
 import com.euthopiar.core.network.DohDns
@@ -111,8 +111,8 @@ class XvideosPlugin(
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val targetUrl = when {
-            mediaItem.url.startsWith("http") -> mediaItem.url
-            mediaItem.id.startsWith("http") -> mediaItem.id
+            mediaItem.url.startsWith("http") -> mediaItem.url.replace("xvideos.com", "xvideos2.com")
+            mediaItem.id.startsWith("http") -> mediaItem.id.replace("xvideos.com", "xvideos2.com")
             mediaItem.id.startsWith("/") -> "$mainUrl${mediaItem.id}"
             else -> "$mainUrl/video.${mediaItem.id}/"
         }

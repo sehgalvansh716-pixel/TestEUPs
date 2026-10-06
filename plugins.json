@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "1c96d508473f0c8ff4023f44c598c93aead1c4dff9262f1898f66877810b3bb1",
+      "sha256": "c75e3fe44fd75e8f43e9cd244e0dd4cba56e7af73bb502394570b6c6e23d3e92",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -38,7 +38,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "6e26542a6d1bd3420807ea1c8922edc3745d1611e8a0eec412376a2ce344ade3",
+      "sha256": "dc00090c9b69aa55a24048905690f27b51556c0d6eb2cd0e3f31c634c9364b91",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -61,7 +61,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "c4e4c6488c80f423fe0b1c7f635f8582518c3c71196f2a5c78faecda011b91ac",
+      "sha256": "dde6519ca5b4b579a0fd1f5c51d2def63098ddd48f0db225aca233de1edb422d",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -84,7 +84,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "1c74b47c1d16929ccae4fc1cd827865b4a6d4d9bf9e145657410d35b0d683a85",
+      "sha256": "f992411142f324026c9fd8b73936e3f93bab8abd7962792e06934b8bc2c8f782",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -98,8 +98,8 @@
     {
       "id": "hqporner",
       "name": "HQPorner",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Vault",
       "siteUrl": "https://hqporner.com",
       "description": "Full-length 4K Ultra HD and 1080p studio scenes with direct MP4 CDN playback.",
@@ -107,20 +107,20 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/hqporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "5329ee1aec3a318295fee996593eb84f7b766e66085a19ae1203c993bf9739df",
+      "sha256": "1acaf232229e151c73bd8578778660d6abd5b39c5a3c35d07d67d7f6c6388589",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 15724,
+      "fileSize": 15725,
       "isAdult": true,
       "isVault": true
     },
     {
       "id": "xvideos",
       "name": "XVideos",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Vault",
       "siteUrl": "https://www.xvideos2.com",
       "description": "Full-length uncut scenes, uploader channels, and 1080p/720p HLS master streams.",
@@ -128,20 +128,20 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/xvideos.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d513f462bdfbdf3b8077fbd79c33ae869041fdec6d9c488f6d8aacd5df247c1e",
+      "sha256": "b0181aa00be89ee6dcaf2516bbc57c7b105994a0a81e4650c2ebb051c63920c5",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 16808,
+      "fileSize": 16829,
       "isAdult": true,
       "isVault": true
     },
     {
       "id": "eporner",
       "name": "EPorner",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Vault",
       "siteUrl": "https://www.eporner.com",
       "description": "4K 60FPS Ultra HD and 1080p full-length scene streaming via official JSON API.",
@@ -149,20 +149,20 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/eporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "220c440deab42168790456b1cf81fe4e5e74a5960d47b6e9dcc1fc2b77760e0d",
+      "sha256": "eed10552c9e1272f30512a8c7bd5236737c2ef5518ec75c7b00773c5cfb0770b",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 18414,
+      "fileSize": 18830,
       "isAdult": true,
       "isVault": true
     },
     {
       "id": "rule34video",
       "name": "Rule34Video",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Vault",
       "siteUrl": "https://rule34video.com",
       "description": "3D, CGI, and animated artwork scenes with high-bitrate direct MP4 playback.",
@@ -170,20 +170,20 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/rule34video.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "25e6861005c315b0827b734285cc3459031d3e4a83312f1ca170ea14f9ab4a1e",
+      "sha256": "7e266254ea780046af49a682ee09b2815e2c771eb786dc125abbf996ff694538",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 12426,
+      "fileSize": 12614,
       "isAdult": true,
       "isVault": true
     },
     {
       "id": "beeg",
       "name": "Beeg",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Vault",
       "siteUrl": "https://beeg.com",
       "description": "Clean, ad-free full-length scenes with fast CDN MP4 streaming.",
@@ -191,20 +191,20 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/beeg.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "2fab75f09e19e9db5adbca67f76c202ac9ef527205cc7be65ffe4164ad396fde",
+      "sha256": "26e9ba2fc2ad8db3ee921178df8e719332b1f4001574f6eae5824d6cd935d1c8",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 15784,
+      "fileSize": 15794,
       "isAdult": true,
       "isVault": true
     },
     {
       "id": "faphouse",
       "name": "Faphouse",
-      "version": 1,
-      "versionName": "1.0.0",
+      "version": 2,
+      "versionName": "1.1.0",
       "author": "Euthopiar Vault",
       "siteUrl": "https://faphouse.com",
       "description": "16:9 short-form and full-length scene metadata, categories, creators, and multi-resolution streams.",
@@ -212,12 +212,12 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/faphouse.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "de816967e6a304f7c90849d3987de0e5a8abec0ccedb002f4168d701ba284f8a",
+      "sha256": "864f10e88914e9df1cc0c8b9a3f1fe6f627791f2ea83ba4375783af5cc408c3e",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
       ],
-      "fileSize": 15830,
+      "fileSize": 16050,
       "isAdult": true,
       "isVault": true
     }

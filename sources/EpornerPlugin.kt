@@ -27,10 +27,13 @@ import java.util.regex.Pattern
  * Backed by automatic DNS-over-HTTPS (DoH) via [DohDns] to avoid ISP DNS blocking.
  */
 class EpornerPlugin(
-    private val client: OkHttpClient = DohDns.createOkHttpClient(
+    customClient: OkHttpClient? = null
+) : UniversalPlugin {
+
+    private val client: OkHttpClient = (customClient ?: DohDns.createOkHttpClient(
         connectTimeoutSeconds = 15,
         readTimeoutSeconds = 20
-    ).newBuilder().cookieJar(object : CookieJar {
+    )).newBuilder().cookieJar(object : CookieJar {
         private val cookieStore = ConcurrentHashMap<String, String>()
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
             cookies.forEach { cookieStore[it.name] = it.value }
@@ -41,9 +44,8 @@ class EpornerPlugin(
             }
         }
     }).build()
-) : UniversalPlugin {
 
-    constructor() : this(DohDns.createOkHttpClient())
+    constructor() : this(null)
 
     override val name: String = "EPorner"
     override val mainUrl: String = "https://www.eporner.com"
@@ -94,7 +96,11 @@ class EpornerPlugin(
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val videoId = mediaItem.id.removePrefix("video-").substringBefore("/").substringBefore("-")
-        val videoPageUrl = "$mainUrl/video-$videoId/"
+        val videoPageUrl = when {
+            mediaItem.url.startsWith("http") -> mediaItem.url
+            mediaItem.url.isNotBlank() -> "$mainUrl/${mediaItem.url.removePrefix("/")}"
+            else -> "$mainUrl/video-$videoId/"
+        }
 
         var resolvedTitle = mediaItem.title
         var duration = mediaItem.rating ?: "15:00"
@@ -216,30 +222,42 @@ class EpornerPlugin(
             "Referer" to "$mainUrl/"
         )
 
-        if (episodeData.startsWith("http://") || episodeData.startsWith("https://")) {
-            val quality = if (episodeData.contains("1080")) "1080p" else if (episodeData.contains("720")) "720p" else "HD"
+        val cleanUrl = episodeData.substringBefore("?dload=")
+
+        if (cleanUrl.startsWith("http://") || cleanUrl.startsWith("https://")) {
+            val quality = when {
+                cleanUrl.contains("1440") -> "1440p 2K"
+                cleanUrl.contains("1080") -> "1080p"
+                cleanUrl.contains("720") -> "720p"
+                cleanUrl.contains("480") -> "480p"
+                cleanUrl.contains("360") -> "360p"
+                cleanUrl.contains("240") -> "240p"
+                else -> "HD"
+            }
             return@withContext StreamResult(
                 streams = listOf(
                     StreamSource(
-                        url = episodeData,
-                        serverName = "EPorner CDN ($quality)",
+                        url = cleanUrl,
+                        serverName = "EPorner High-Speed CDN ($quality)",
                         resolutionLabel = quality,
                         quality = quality,
-                        isM3u8 = episodeData.contains(".m3u8"),
+                        isM3u8 = cleanUrl.contains(".m3u8"),
                         headers = streamHeaders
                     )
                 )
             )
         }
 
-        val detail = getDetails(MediaItem(id = episodeData, title = "", url = "", posterUrl = null, type = MediaType.MOVIE))
+        val detail = getDetails(MediaItem(id = cleanUrl, title = "", url = "", posterUrl = null, type = MediaType.MOVIE))
         val sources = detail.episodes.map { ep ->
+            val cleanEpUrl = ep.data.substringBefore("?dload=")
+            val q = ep.title
             StreamSource(
-                url = ep.data,
-                serverName = "EPorner CDN (${ep.title})",
-                resolutionLabel = ep.title,
-                quality = ep.title,
-                isM3u8 = ep.data.contains(".m3u8"),
+                url = cleanEpUrl,
+                serverName = "EPorner High-Speed CDN ($q)",
+                resolutionLabel = q,
+                quality = q,
+                isM3u8 = cleanEpUrl.contains(".m3u8"),
                 headers = streamHeaders
             )
         }
@@ -319,9 +337,12 @@ class EpornerPlugin(
             val req = Request.Builder()
                 .url(dloadUrl)
                 .header("User-Agent", defaultUserAgent)
+                .header("Referer", "$mainUrl/")
                 .build()
             noRedirectClient.newCall(req).execute().use { resp ->
-                resp.header("Location")
+                val loc = resp.header("Location") ?: return null
+                val fullUrl = if (loc.startsWith("/")) "$mainUrl$loc" else loc
+                fullUrl.substringBefore("?dload=")
             }
         } catch (_: Exception) {
             null

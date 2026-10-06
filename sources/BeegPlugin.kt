@@ -201,7 +201,11 @@ class BeegPlugin(
                     if (resp.isSuccessful) {
                         val path = resp.body?.string()?.trim()
                         if (!path.isNullOrBlank()) {
-                            finalUrl = if (path.startsWith("http")) path else "https://video.beeg.com/$path"
+                            finalUrl = when {
+                                path.startsWith("http") -> path
+                                path.startsWith("/") -> "https://video.beeg.com$path"
+                                else -> "https://video.beeg.com/$path"
+                            }
                         }
                     }
                 }
