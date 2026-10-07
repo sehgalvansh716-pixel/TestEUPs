@@ -94,7 +94,7 @@ class FreekzPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "freekz",
         name = "Freekz",
-        version = 2,
+        version = 3,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FreekzPlugin",
@@ -1246,316 +1246,293 @@ class FreekzPlugin(
             }
         }
 
-        introJob.join()
+        // ─── Parallel Task C: Servers Stream Resolvers (Instant Zero-Delay Emission) ───
+        // Run all servers concurrently with zero throttling so Atlas & all streams emit within < 400ms!
 
-        // ─── Parallel Task C: Servers Stream Resolvers (15+ Sources) ───
-        val serverThrottle = Semaphore(2)
-
-        // 1. Server Cluster: Orion (Multi-Audio & Dubs)
+        // 1. FAST FLAGSHIP HLS: Atlas (Multi-HLS High-Speed CDN Mirrors) - Queried immediately!
         launch {
-            serverThrottle.withPermit {
-                try {
-                    onStatus("Orion", "Connecting to Orion Multi-Audio cluster...")
-                    val sData = fetchServerData("orion", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
-                    if (sData != null) {
-                        // Original audio stream
-                        val links = sData["links"]?.jsonArray.orEmpty()
-                        for (l in links) {
-                            val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val res = l.jsonObject["resolution"]?.jsonPrimitive?.contentOrNull ?: "1080p"
-                            val type = l.jsonObject["type"]?.jsonPrimitive?.contentOrNull ?: "dash"
+            try {
+                onStatus("Atlas", "Connecting to Atlas Multi-HLS cluster...")
+                val sData = fetchServerData("atlas", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
+                if (sData != null) {
+                    val links = sData["links"]?.jsonArray.orEmpty()
+                    var mirrorIndex = 1
+                    for (l in links) {
+                        val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                        try {
+                            val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
+                            val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                            val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
+
+                            val label = "Freekz - Atlas [HLS Mirror $mirrorIndex - 1080p]"
+                            mirrorIndex++
+                            emitResolvedSource(
+                                sourceId = "freekz_atlas_${mirrorIndex}_${fullUrl.hashCode().toString(16)}",
+                                serverName = label,
+                                url = taggedUrl,
+                                quality = "1080p",
+                                isHls = true,
+                                audioTracks = listOf(CoreAudioTrackDescriptor("Original Audio", "en", 2, "aac")),
+                                v2AudioTracks = listOf(EupAudioTrackDescriptor("Original Audio", "en", true, "aac", 2)),
+                                streamHeaders = streamHeaders,
+                                introOffsetMs = introOffsetMs,
+                                subtitles = collectedV2Subs,
+                                onStreamFound = onStreamFound,
+                                onV2StreamFound = onV2StreamFound
+                            )
+                        } catch (e: Throwable) {
+                            safeLog("FreekzPlugin", "Atlas decrypt error: ${e.message}", e)
+                        }
+                    }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                safeLog("FreekzPlugin", "Atlas error: ${t.message}", t)
+            }
+        }
+
+        // 2. FAST HLS: Ursa / Meow (Edge HLS CDN) - Queried concurrently
+        launch {
+            try {
+                onStatus("Ursa", "Connecting to Ursa Edge cluster...")
+                val sData = fetchServerData("meow", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
+                if (sData != null) {
+                    val links = sData["links"]?.jsonArray.orEmpty()
+                    for (l in links) {
+                        val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                        try {
+                            val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
+                            val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                            val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
+
+                            emitResolvedSource(
+                                sourceId = "freekz_ursa_${fullUrl.hashCode().toString(16)}",
+                                serverName = "Freekz - Ursa [HLS Stream]",
+                                url = taggedUrl,
+                                quality = "1080p",
+                                isHls = true,
+                                audioTracks = listOf(CoreAudioTrackDescriptor("Original Audio", "en", 2, "aac")),
+                                v2AudioTracks = listOf(EupAudioTrackDescriptor("Original Audio", "en", true, "aac", 2)),
+                                streamHeaders = streamHeaders,
+                                introOffsetMs = introOffsetMs,
+                                subtitles = collectedV2Subs,
+                                onStreamFound = onStreamFound,
+                                onV2StreamFound = onV2StreamFound
+                            )
+                        } catch (e: Throwable) {
+                            safeLog("FreekzPlugin", "Ursa decrypt error: ${e.message}", e)
+                        }
+                    }
+                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                safeLog("FreekzPlugin", "Ursa error: ${t.message}", t)
+            }
+        }
+
+        // 3. Orion (Original Audio + parallel background Dubs)
+        launch {
+            try {
+                onStatus("Orion", "Connecting to Orion cluster...")
+                val sData = fetchServerData("orion", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
+                if (sData != null) {
+                    val links = sData["links"]?.jsonArray.orEmpty()
+                    for (l in links) {
+                        val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val res = l.jsonObject["resolution"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                        val type = l.jsonObject["type"]?.jsonPrimitive?.contentOrNull ?: "dash"
+                        try {
+                            val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
+                            val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                            val isHls = type == "hls" || fullUrl.contains(".m3u8")
+                            val taggedUrl = if (isHls) {
+                                if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
+                            } else {
+                                if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
+                            }
+
+                            emitResolvedSource(
+                                sourceId = "freekz_orion_orig_${fullUrl.hashCode().toString(16)}",
+                                serverName = "Freekz - Orion [Original Audio]",
+                                url = taggedUrl,
+                                quality = if (res == "0" || res == "null") "1080p" else res,
+                                isHls = isHls,
+                                audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 6, "aac")),
+                                v2AudioTracks = listOf(EupAudioTrackDescriptor("English 5.1", "en", true, "aac", 6)),
+                                streamHeaders = streamHeaders,
+                                introOffsetMs = introOffsetMs,
+                                subtitles = collectedV2Subs,
+                                onStreamFound = onStreamFound,
+                                onV2StreamFound = onV2StreamFound
+                            )
+                        } catch (e: Throwable) {
+                            safeLog("FreekzPlugin", "Orion decrypt error: ${e.message}", e)
+                        }
+                    }
+
+                    // Background dub fetching without blocking primary stream playback
+                    val dubs = sData["dubs"]?.jsonArray.orEmpty()
+                    for (d in dubs.take(6)) {
+                        val dObj = d.jsonObject
+                        if (dObj["original"]?.jsonPrimitive?.booleanOrNull == true) continue
+                        val lanCode = dObj["lanCode"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val lanName = dObj["lanName"]?.jsonPrimitive?.contentOrNull ?: lanCode.uppercase()
+                        val dubType = dObj["type"]?.jsonPrimitive?.contentOrNull ?: "0"
+
+                        launch {
                             try {
-                                val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
-                                val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
-                                val isHls = type == "hls" || fullUrl.contains(".m3u8")
-                                val taggedUrl = if (isHls) {
-                                    if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
-                                } else {
-                                    if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
+                                val dubData = fetchServerData("orion", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders, dubCode = lanCode, dubType = dubType)
+                                val dubLinks = dubData?.get("links")?.jsonArray.orEmpty()
+                                for (dl in dubLinks) {
+                                    val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                                    val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
+                                    val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
+                                    val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
+
+                                    emitResolvedSource(
+                                        sourceId = "freekz_orion_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
+                                        serverName = "Freekz - Orion [$lanName Dub]",
+                                        url = taggedDubUrl,
+                                        quality = "1080p",
+                                        isHls = false,
+                                        audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
+                                        v2AudioTracks = listOf(EupAudioTrackDescriptor(lanName, lanCode, false, "aac", 2)),
+                                        streamHeaders = streamHeaders,
+                                        introOffsetMs = introOffsetMs,
+                                        subtitles = collectedV2Subs,
+                                        onStreamFound = onStreamFound,
+                                        onV2StreamFound = onV2StreamFound
+                                    )
                                 }
-
-                                val serverLabel = "Freekz - Orion [Original Audio]"
-                                emitResolvedSource(
-                                    sourceId = "freekz_orion_orig_${fullUrl.hashCode().toString(16)}",
-                                    serverName = serverLabel,
-                                    url = taggedUrl,
-                                    quality = if (res == "0" || res == "null") "1080p" else res,
-                                    isHls = isHls,
-                                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 6, "aac")),
-                                    v2AudioTracks = listOf(EupAudioTrackDescriptor("English 5.1", "en", true, "aac", 6)),
-                                    streamHeaders = streamHeaders,
-                                    introOffsetMs = introOffsetMs,
-                                    subtitles = collectedV2Subs,
-                                    onStreamFound = onStreamFound,
-                                    onV2StreamFound = onV2StreamFound
-                                )
-                            } catch (e: Throwable) {
-                                safeLog("FreekzPlugin", "Orion decrypt error: ${e.message}", e)
-                            }
-                        }
-
-                        // Dubs streams: Fetch top available dubs (Hindi, French, Spanish, German, etc.)
-                        val dubs = sData["dubs"]?.jsonArray.orEmpty()
-                        for (d in dubs.take(8)) {
-                            val dObj = d.jsonObject
-                            val isOrig = dObj["original"]?.jsonPrimitive?.booleanOrNull ?: false
-                            if (isOrig) continue
-                            val lanCode = dObj["lanCode"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val lanName = dObj["lanName"]?.jsonPrimitive?.contentOrNull ?: lanCode.uppercase()
-                            val dubType = dObj["type"]?.jsonPrimitive?.contentOrNull ?: "0"
-
-                            launch {
-                                try {
-                                    val dubData = fetchServerData("orion", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders, dubCode = lanCode, dubType = dubType)
-                                    val dubLinks = dubData?.get("links")?.jsonArray.orEmpty()
-                                    for (dl in dubLinks) {
-                                        val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                                        val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
-                                        val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
-                                        val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
-
-                                        val label = "Freekz - Orion [$lanName]"
-                                        emitResolvedSource(
-                                            sourceId = "freekz_orion_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
-                                            serverName = label,
-                                            url = taggedDubUrl,
-                                            quality = "1080p",
-                                            isHls = false,
-                                            audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
-                                            v2AudioTracks = listOf(EupAudioTrackDescriptor(lanName, lanCode, false, "aac", 2)),
-                                            streamHeaders = streamHeaders,
-                                            introOffsetMs = introOffsetMs,
-                                            subtitles = collectedV2Subs,
-                                            onStreamFound = onStreamFound,
-                                            onV2StreamFound = onV2StreamFound
-                                        )
-                                    }
-                                } catch (_: Throwable) {}
-                            }
+                            } catch (_: Throwable) {}
                         }
                     }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (t: Throwable) {
-                    safeLog("FreekzPlugin", "Orion error: ${t.message}", t)
                 }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                safeLog("FreekzPlugin", "Orion error: ${t.message}", t)
             }
         }
 
-        // 2. Server Cluster: Centaurus (Multi-Audio Mirror & Direct CDN)
+        // 4. Centaurus (Original Audio + parallel background Dubs)
         launch {
-            serverThrottle.withPermit {
-                try {
-                    delay(120)
-                    onStatus("Centaurus", "Connecting to Centaurus Multi-Audio cluster...")
-                    val sData = fetchServerData("centaurus", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
-                    if (sData != null) {
-                        val links = sData["links"]?.jsonArray.orEmpty()
-                        for (l in links) {
-                            val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val res = l.jsonObject["resolution"]?.jsonPrimitive?.contentOrNull ?: "1080p"
-                            try {
-                                val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
-                                val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
-                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
+            try {
+                onStatus("Centaurus", "Connecting to Centaurus cluster...")
+                val sData = fetchServerData("centaurus", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
+                if (sData != null) {
+                    val links = sData["links"]?.jsonArray.orEmpty()
+                    for (l in links) {
+                        val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val res = l.jsonObject["resolution"]?.jsonPrimitive?.contentOrNull ?: "1080p"
+                        try {
+                            val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
+                            val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                            val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
 
-                                val serverLabel = "Freekz - Centaurus [Original Audio]"
-                                emitResolvedSource(
-                                    sourceId = "freekz_cent_orig_${fullUrl.hashCode().toString(16)}",
-                                    serverName = serverLabel,
-                                    url = taggedUrl,
-                                    quality = if (res == "0" || res == "null") "1080p" else res,
-                                    isHls = false,
-                                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 6, "aac")),
-                                    v2AudioTracks = listOf(EupAudioTrackDescriptor("English", "en", true, "aac", 6)),
-                                    streamHeaders = streamHeaders,
-                                    introOffsetMs = introOffsetMs,
-                                    subtitles = collectedV2Subs,
-                                    onStreamFound = onStreamFound,
-                                    onV2StreamFound = onV2StreamFound
-                                )
-                            } catch (e: Throwable) {
-                                safeLog("FreekzPlugin", "Centaurus decrypt error: ${e.message}", e)
-                            }
-                        }
-
-                        // Dubs streams for Centaurus
-                        val dubs = sData["dubs"]?.jsonArray.orEmpty()
-                        for (d in dubs.take(6)) {
-                            val dObj = d.jsonObject
-                            val isOrig = dObj["original"]?.jsonPrimitive?.booleanOrNull ?: false
-                            if (isOrig) continue
-                            val lanCode = dObj["lanCode"]?.jsonPrimitive?.contentOrNull ?: continue
-                            val lanName = dObj["lanName"]?.jsonPrimitive?.contentOrNull ?: lanCode.uppercase()
-                            val dubType = dObj["type"]?.jsonPrimitive?.contentOrNull ?: "0"
-
-                            launch {
-                                try {
-                                    val dubData = fetchServerData("centaurus", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders, dubCode = lanCode, dubType = dubType)
-                                    val dubLinks = dubData?.get("links")?.jsonArray.orEmpty()
-                                    for (dl in dubLinks) {
-                                        val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                                        val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
-                                        val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
-                                        val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
-
-                                        val label = "Freekz - Centaurus [$lanName]"
-                                        emitResolvedSource(
-                                            sourceId = "freekz_cent_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
-                                            serverName = label,
-                                            url = taggedDubUrl,
-                                            quality = "1080p",
-                                            isHls = false,
-                                            audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
-                                            v2AudioTracks = listOf(EupAudioTrackDescriptor(lanName, lanCode, false, "aac", 2)),
-                                            streamHeaders = streamHeaders,
-                                            introOffsetMs = introOffsetMs,
-                                            subtitles = collectedV2Subs,
-                                            onStreamFound = onStreamFound,
-                                            onV2StreamFound = onV2StreamFound
-                                        )
-                                    }
-                                } catch (_: Throwable) {}
-                            }
+                            emitResolvedSource(
+                                sourceId = "freekz_cent_orig_${fullUrl.hashCode().toString(16)}",
+                                serverName = "Freekz - Centaurus [Original Audio]",
+                                url = taggedUrl,
+                                quality = if (res == "0" || res == "null") "1080p" else res,
+                                isHls = false,
+                                audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 6, "aac")),
+                                v2AudioTracks = listOf(EupAudioTrackDescriptor("English 5.1", "en", true, "aac", 6)),
+                                streamHeaders = streamHeaders,
+                                introOffsetMs = introOffsetMs,
+                                subtitles = collectedV2Subs,
+                                onStreamFound = onStreamFound,
+                                onV2StreamFound = onV2StreamFound
+                            )
+                        } catch (e: Throwable) {
+                            safeLog("FreekzPlugin", "Centaurus decrypt error: ${e.message}", e)
                         }
                     }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (t: Throwable) {
-                    safeLog("FreekzPlugin", "Centaurus error: ${t.message}", t)
+
+                    // Background dub fetching
+                    val dubs = sData["dubs"]?.jsonArray.orEmpty()
+                    for (d in dubs.take(6)) {
+                        val dObj = d.jsonObject
+                        if (dObj["original"]?.jsonPrimitive?.booleanOrNull == true) continue
+                        val lanCode = dObj["lanCode"]?.jsonPrimitive?.contentOrNull ?: continue
+                        val lanName = dObj["lanName"]?.jsonPrimitive?.contentOrNull ?: lanCode.uppercase()
+                        val dubType = dObj["type"]?.jsonPrimitive?.contentOrNull ?: "0"
+
+                        launch {
+                            try {
+                                val dubData = fetchServerData("centaurus", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders, dubCode = lanCode, dubType = dubType)
+                                val dubLinks = dubData?.get("links")?.jsonArray.orEmpty()
+                                for (dl in dubLinks) {
+                                    val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                                    val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
+                                    val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
+                                    val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
+
+                                    emitResolvedSource(
+                                        sourceId = "freekz_cent_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
+                                        serverName = "Freekz - Centaurus [$lanName Dub]",
+                                        url = taggedDubUrl,
+                                        quality = "1080p",
+                                        isHls = false,
+                                        audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
+                                        v2AudioTracks = listOf(EupAudioTrackDescriptor(lanName, lanCode, false, "aac", 2)),
+                                        streamHeaders = streamHeaders,
+                                        introOffsetMs = introOffsetMs,
+                                        subtitles = collectedV2Subs,
+                                        onStreamFound = onStreamFound,
+                                        onV2StreamFound = onV2StreamFound
+                                    )
+                                }
+                            } catch (_: Throwable) {}
+                        }
+                    }
                 }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                safeLog("FreekzPlugin", "Centaurus error: ${t.message}", t)
             }
         }
 
-        // 3. Server Cluster: Andromeda (HD 1080p Smooth Playback)
+        // 5. Andromeda (HD 1080p Smooth Playback)
         launch {
-            serverThrottle.withPermit {
-                try {
-                    delay(200)
-                    onStatus("Andromeda", "Connecting to Andromeda HD cluster...")
-                    val sData = fetchServerData("andromeda", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
-                    if (sData != null) {
-                        val links = sData["links"]?.jsonArray.orEmpty()
-                        for (l in links) {
-                            val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                            try {
-                                val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
-                                val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
-                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
+            try {
+                onStatus("Andromeda", "Connecting to Andromeda HD cluster...")
+                val sData = fetchServerData("andromeda", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
+                if (sData != null) {
+                    val links = sData["links"]?.jsonArray.orEmpty()
+                    for (l in links) {
+                        val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
+                        try {
+                            val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
+                            val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                            val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
 
-                                emitResolvedSource(
-                                    sourceId = "freekz_andro_${fullUrl.hashCode().toString(16)}",
-                                    serverName = "Freekz - Andromeda [HD 1080p]",
-                                    url = taggedUrl,
-                                    quality = "1080p",
-                                    isHls = false,
-                                    audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "aac")),
-                                    v2AudioTracks = listOf(EupAudioTrackDescriptor("English", "en", true, "aac", 2)),
-                                    streamHeaders = streamHeaders,
-                                    introOffsetMs = introOffsetMs,
-                                    subtitles = collectedV2Subs,
-                                    onStreamFound = onStreamFound,
-                                    onV2StreamFound = onV2StreamFound
-                                )
-                            } catch (e: Throwable) {
-                                safeLog("FreekzPlugin", "Andromeda decrypt error: ${e.message}", e)
-                            }
+                            emitResolvedSource(
+                                sourceId = "freekz_andro_${fullUrl.hashCode().toString(16)}",
+                                serverName = "Freekz - Andromeda [HD 1080p]",
+                                url = taggedUrl,
+                                quality = "1080p",
+                                isHls = false,
+                                audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "aac")),
+                                v2AudioTracks = listOf(EupAudioTrackDescriptor("English", "en", true, "aac", 2)),
+                                streamHeaders = streamHeaders,
+                                introOffsetMs = introOffsetMs,
+                                subtitles = collectedV2Subs,
+                                onStreamFound = onStreamFound,
+                                onV2StreamFound = onV2StreamFound
+                            )
+                        } catch (e: Throwable) {
+                            safeLog("FreekzPlugin", "Andromeda decrypt error: ${e.message}", e)
                         }
                     }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (t: Throwable) {
-                    safeLog("FreekzPlugin", "Andromeda error: ${t.message}", t)
                 }
-            }
-        }
-
-        // 4. Server Cluster: Atlas (Multi-HLS Streams)
-        launch {
-            serverThrottle.withPermit {
-                try {
-                    delay(250)
-                    onStatus("Atlas", "Connecting to Atlas Multi-HLS cluster...")
-                    val sData = fetchServerData("atlas", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
-                    if (sData != null) {
-                        val links = sData["links"]?.jsonArray.orEmpty()
-                        var mirrorIndex = 1
-                        for (l in links) {
-                            val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                            try {
-                                val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
-                                val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
-                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
-
-                                val label = "Freekz - Atlas [HLS Mirror $mirrorIndex]"
-                                mirrorIndex++
-                                emitResolvedSource(
-                                    sourceId = "freekz_atlas_${mirrorIndex}_${fullUrl.hashCode().toString(16)}",
-                                    serverName = label,
-                                    url = taggedUrl,
-                                    quality = "Auto",
-                                    isHls = true,
-                                    audioTracks = listOf(CoreAudioTrackDescriptor("Original", "en", 2, "aac")),
-                                    v2AudioTracks = listOf(EupAudioTrackDescriptor("Original", "en", true, "aac", 2)),
-                                    streamHeaders = streamHeaders,
-                                    introOffsetMs = introOffsetMs,
-                                    subtitles = collectedV2Subs,
-                                    onStreamFound = onStreamFound,
-                                    onV2StreamFound = onV2StreamFound
-                                )
-                            } catch (e: Throwable) {
-                                safeLog("FreekzPlugin", "Atlas decrypt error: ${e.message}", e)
-                            }
-                        }
-                    }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (t: Throwable) {
-                    safeLog("FreekzPlugin", "Atlas error: ${t.message}", t)
-                }
-            }
-        }
-
-        // 5. Server Cluster: Ursa / Meow (Alternative HLS Edge)
-        launch {
-            serverThrottle.withPermit {
-                try {
-                    delay(300)
-                    onStatus("Ursa", "Connecting to Ursa Edge cluster...")
-                    val sData = fetchServerData("meow", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
-                    if (sData != null) {
-                        val links = sData["links"]?.jsonArray.orEmpty()
-                        for (l in links) {
-                            val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                            try {
-                                val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
-                                val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
-                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
-
-                                emitResolvedSource(
-                                    sourceId = "freekz_ursa_${fullUrl.hashCode().toString(16)}",
-                                    serverName = "Freekz - Ursa [HLS Stream]",
-                                    url = taggedUrl,
-                                    quality = "Auto",
-                                    isHls = true,
-                                    audioTracks = listOf(CoreAudioTrackDescriptor("Original", "en", 2, "aac")),
-                                    v2AudioTracks = listOf(EupAudioTrackDescriptor("Original", "en", true, "aac", 2)),
-                                    streamHeaders = streamHeaders,
-                                    introOffsetMs = introOffsetMs,
-                                    subtitles = collectedV2Subs,
-                                    onStreamFound = onStreamFound,
-                                    onV2StreamFound = onV2StreamFound
-                                )
-                            } catch (e: Throwable) {
-                                safeLog("FreekzPlugin", "Ursa decrypt error: ${e.message}", e)
-                            }
-                        }
-                    }
-                } catch (ce: CancellationException) {
-                    throw ce
-                } catch (t: Throwable) {
-                    safeLog("FreekzPlugin", "Ursa error: ${t.message}", t)
-                }
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (t: Throwable) {
+                safeLog("FreekzPlugin", "Andromeda error: ${t.message}", t)
             }
         }
     }
