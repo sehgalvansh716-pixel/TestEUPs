@@ -101,7 +101,7 @@ class MovyPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "movy",
         name = "Movy",
-        version = 3,
+        version = 4,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.MovyPlugin",
@@ -390,30 +390,11 @@ class MovyPlugin(
         getStreamFlow(episodeData ?: mediaId)
 
     override fun getStreamFlow(episodeData: String): Flow<StreamEmission> = channelFlow {
-        val rawInput = episodeData.trim()
-        val tmdbId = extractTmdbId(rawInput)
-
-        val hasColon = rawInput.contains(":")
-        val isTvHint = rawInput.contains("/tv/") || rawInput.contains("tv", ignoreCase = true) || rawInput.contains("series", ignoreCase = true)
-
-        val season: Int?
-        val episode: Int?
-        val isTv: Boolean
-
-        if (hasColon) {
-            val parts = rawInput.split(":")
-            season = parts.getOrNull(1)?.toIntOrNull() ?: 1
-            episode = parts.getOrNull(2)?.toIntOrNull() ?: 1
-            isTv = true
-        } else if (isTvHint || mediaTypeCache[tmdbId] == MediaType.TV_SERIES || mediaTypeCache[rawInput] == MediaType.TV_SERIES) {
-            season = 1
-            episode = 1
-            isTv = true
-        } else {
-            season = null
-            episode = null
-            isTv = false
-        }
+        val target = parseTarget(episodeData)
+        val tmdbId = target.tmdbId
+        val season = target.season
+        val episode = target.episode
+        val isTv = target.isTv
 
         val emittedStreamKeys = Collections.synchronizedSet(mutableSetOf<String>())
         val emittedSubUrls = Collections.synchronizedSet(mutableSetOf<String>())
@@ -547,6 +528,8 @@ class MovyPlugin(
                             queryParams.append("&tmdbId=").append(tmdbId)
                             if (!imdbId.isNullOrBlank()) queryParams.append("&imdbId=").append(imdbId)
                             if (isTv && season != null && episode != null) {
+                                queryParams.append("&seasonId=").append(season)
+                                queryParams.append("&episodeId=").append(episode)
                                 queryParams.append("&season=").append(season)
                                 queryParams.append("&episode=").append(episode)
                             }
@@ -590,7 +573,8 @@ class MovyPlugin(
                                 // A. Emit Master HLS Playlist
                                 val playlistUrl = parsed["playlist"]?.jsonPrimitive?.contentOrNull
                                 if (!playlistUrl.isNullOrBlank() && playlistUrl.startsWith("http")) {
-                                    val masterSourceId = "movy:${server.tag}:$tmdbId:master"
+                                    val epSegment = if (isTv && season != null && episode != null) "s${season}e$episode" else "movie"
+                                    val masterSourceId = "movy:${server.tag}:$tmdbId:$epSegment:master"
                                     val masterVirtualUrl = "eup://movy/$masterSourceId/master.m3u8"
 
                                     val eupMasterSource = EupStreamSource(
@@ -658,7 +642,8 @@ class MovyPlugin(
                                             else -> rawQuality
                                         }
 
-                                        val sourceId = "movy:${server.tag}:$tmdbId:$rawQuality"
+                                        val epSegment = if (isTv && season != null && episode != null) "s${season}e$episode" else "movie"
+                                        val sourceId = "movy:${server.tag}:$tmdbId:$epSegment:$rawQuality"
                                         val virtualUrl = "eup://movy/$sourceId/master.m3u8"
 
                                         val eupSource = EupStreamSource(
@@ -783,6 +768,7 @@ class MovyPlugin(
         val (tmdbId, isTv, season, episode) = when (target) {
             is PlayableTarget.Movie -> TargetInfo(target.tmdbId.toString(), false, null, null)
             is PlayableTarget.Episode -> TargetInfo(target.tmdbId.toString(), true, target.season, target.episode)
+            is PlayableTarget.Direct -> parseTarget(target.pageUrl)
             else -> {
                 send(StreamBundleEvent.Error("Unsupported PlayableTarget for Movy"))
                 return@channelFlow
@@ -797,7 +783,8 @@ class MovyPlugin(
                 if (emission is StreamEmission.SourceFound) {
                     val src = emission.source
                     val serverId = src.serverName.replace(Regex("[^A-Za-z0-9_]"), "_").lowercase()
-                    val sourceId = "movy:$serverId:$tmdbId"
+                    val epSegment = if (isTv && season != null && episode != null) "s${season}e$episode" else "movie"
+                    val sourceId = "movy:$serverId:$tmdbId:$epSegment"
                     val virtualUrl = if (src.url.startsWith("eup://")) src.url else "eup://movy/$sourceId/master.m3u8"
 
                     val eupSource = EupStreamSource(
@@ -939,6 +926,7 @@ class MovyPlugin(
                                     ?: return@mapNotNull null
                                 val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull
                                 val isTv = mediaTypeStr == "tv" || url.contains("/tv/") || url.contains("/tv?")
+                                mediaTypeCache[id] = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE
                                 val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
                                 val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
 
@@ -984,6 +972,7 @@ class MovyPlugin(
                         ?: obj["name"]?.jsonPrimitive?.contentOrNull
                         ?: return@mapNotNull null
                     val isTv = mType == "tv"
+                    mediaTypeCache[id] = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE
                     val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
                     val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
                     val year = (obj["release_date"]?.jsonPrimitive?.contentOrNull
@@ -1069,7 +1058,17 @@ class MovyPlugin(
                     val title = obj["title"]?.jsonPrimitive?.contentOrNull
                         ?: obj["name"]?.jsonPrimitive?.contentOrNull
                         ?: return@mapNotNull null
-                    val isTv = obj["media_type"]?.jsonPrimitive?.contentOrNull == "tv" || endpoint.startsWith("tv")
+                    val isTv = obj["media_type"]?.jsonPrimitive?.contentOrNull == "tv" ||
+                        endpoint.contains("/tv") ||
+                        endpoint.startsWith("tv") ||
+                        section.id.endsWith("_tv")
+
+                    if (isTv) {
+                        mediaTypeCache[id] = MediaType.TV_SERIES
+                    } else {
+                        mediaTypeCache[id] = MediaType.MOVIE
+                    }
+
                     val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
                     val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
                     val year = (obj["release_date"]?.jsonPrimitive?.contentOrNull
@@ -1077,9 +1076,9 @@ class MovyPlugin(
                         ?.take(4)?.toIntOrNull()
 
                     val target = if (isTv) {
-                        PlayableTarget.Episode(tmdbId = id.toInt(), season = 1, episode = 1, title = title)
+                        PlayableTarget.Episode(tmdbId = id.toIntOrNull() ?: 0, season = 1, episode = 1, title = title)
                     } else {
-                        PlayableTarget.Movie(tmdbId = id.toInt(), title = title, releaseYear = year)
+                        PlayableTarget.Movie(tmdbId = id.toIntOrNull() ?: 0, title = title, releaseYear = year)
                     }
 
                     MediaCard(
@@ -1124,6 +1123,11 @@ class MovyPlugin(
                         ?: obj["name"]?.jsonPrimitive?.contentOrNull
                         ?: return@mapNotNull null
                     val isTv = mType == "tv"
+                    if (isTv) {
+                        mediaTypeCache[id] = MediaType.TV_SERIES
+                    } else {
+                        mediaTypeCache[id] = MediaType.MOVIE
+                    }
                     val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
                     val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
                     val year = (obj["release_date"]?.jsonPrimitive?.contentOrNull
@@ -1131,9 +1135,9 @@ class MovyPlugin(
                         ?.take(4)?.toIntOrNull()
 
                     val target = if (isTv) {
-                        PlayableTarget.Episode(tmdbId = id.toInt(), season = 1, episode = 1, title = title)
+                        PlayableTarget.Episode(tmdbId = id.toIntOrNull() ?: 0, season = 1, episode = 1, title = title)
                     } else {
-                        PlayableTarget.Movie(tmdbId = id.toInt(), title = title, releaseYear = year)
+                        PlayableTarget.Movie(tmdbId = id.toIntOrNull() ?: 0, title = title, releaseYear = year)
                     }
 
                     MediaCard(
@@ -1159,8 +1163,12 @@ class MovyPlugin(
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
         val tmdbId = extractTmdbId(mediaItem.id).ifBlank { extractTmdbId(mediaItem.url) }
         var isTv = mediaItem.type == MediaType.TV_SERIES ||
+            mediaTypeCache[tmdbId] == MediaType.TV_SERIES ||
+            mediaTypeCache[mediaItem.id] == MediaType.TV_SERIES ||
             mediaItem.url.contains("/tv/") ||
-            mediaItem.id.contains("tv", ignoreCase = true)
+            mediaItem.id.contains("tv", ignoreCase = true) ||
+            mediaItem.title.contains("Season", ignoreCase = true) ||
+            mediaItem.title.contains("Series", ignoreCase = true)
         var endpoint = if (isTv) "tv" else "movie"
         var url = "https://api.themoviedb.org/3/$endpoint/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,recommendations,similar,videos,external_ids"
         var req = Request.Builder().url(url).build()
@@ -1293,38 +1301,81 @@ class MovyPlugin(
                     }
 
                     if (isTv) {
-                        val numSeasons = obj["number_of_seasons"]?.jsonPrimitive?.intOrNull ?: 1
-                        for (sNum in 1..numSeasons) {
-                            try {
-                                val sUrl = "https://api.themoviedb.org/3/tv/$tmdbId/season/$sNum?api_key=$tmdbApiKey"
-                                val sReq = Request.Builder().url(sUrl).build()
-                                http.meta.newCall(sReq).execute().use { sResp ->
-                                    if (sResp.isSuccessful) {
-                                        val sBody = sResp.body?.string().orEmpty()
-                                        val sObj = json.parseToJsonElement(sBody).jsonObject
-                                        val epArr = sObj["episodes"]?.jsonArray
-
-                                        epArr?.forEach { epElem ->
-                                            val epObj = epElem.jsonObject
-                                            val epNum = epObj["episode_number"]?.jsonPrimitive?.intOrNull ?: return@forEach
-                                            val epName = epObj["name"]?.jsonPrimitive?.contentOrNull ?: "Episode $epNum"
-                                            val epStill = epObj["still_path"]?.jsonPrimitive?.contentOrNull?.let {
-                                                "https://image.tmdb.org/t/p/w300$it"
-                                            }
-                                            val epDetail = EpisodeItem(
-                                                id = "$tmdbId:$sNum:$epNum",
-                                                title = epName,
-                                                seasonNumber = sNum,
-                                                episodeNumber = epNum,
-                                                data = "$tmdbId:$sNum:$epNum",
-                                                thumbnail = epStill
-                                            )
-                                            allEpisodes.add(epDetail)
-                                        }
-                                    }
+                        val seasonsArr = obj["seasons"]?.jsonArray
+                        val seasonsInfo = mutableListOf<Pair<Int, Int>>()
+                        if (seasonsArr != null) {
+                            for (sElem in seasonsArr) {
+                                val sObj = sElem.jsonObject
+                                val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: continue
+                                val count = sObj["episode_count"]?.jsonPrimitive?.intOrNull ?: 0
+                                if (sNum > 0) {
+                                    seasonsInfo.add(sNum to count)
                                 }
-                            } catch (_: Throwable) {}
+                            }
                         }
+                        if (seasonsInfo.isEmpty()) {
+                            val numSeasons = obj["number_of_seasons"]?.jsonPrimitive?.intOrNull ?: 1
+                            for (s in 1..numSeasons) {
+                                seasonsInfo.add(s to 10)
+                            }
+                        }
+
+                        coroutineScope {
+                            val deferredSeasons = seasonsInfo.map { (sNum, _) ->
+                                async {
+                                    try {
+                                        val sUrl = "https://api.themoviedb.org/3/tv/$tmdbId/season/$sNum?api_key=$tmdbApiKey"
+                                        val sReq = Request.Builder().url(sUrl).build()
+                                        http.meta.newCall(sReq).execute().use { sResp ->
+                                            if (sResp.isSuccessful) {
+                                                val sBody = sResp.body?.string().orEmpty()
+                                                val sObj = json.parseToJsonElement(sBody).jsonObject
+                                                val epArr = sObj["episodes"]?.jsonArray
+                                                epArr?.mapNotNull { epElem ->
+                                                    val epObj = epElem.jsonObject
+                                                    val epNum = epObj["episode_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                                                    val epName = epObj["name"]?.jsonPrimitive?.contentOrNull ?: "Episode $epNum"
+                                                    val epStill = epObj["still_path"]?.jsonPrimitive?.contentOrNull?.let {
+                                                        "https://image.tmdb.org/t/p/w300$it"
+                                                    }
+                                                    val epOverview = epObj["overview"]?.jsonPrimitive?.contentOrNull
+                                                    EpisodeItem(
+                                                        id = "$tmdbId:$sNum:$epNum",
+                                                        title = epName,
+                                                        seasonNumber = sNum,
+                                                        episodeNumber = epNum,
+                                                        data = "$tmdbId:$sNum:$epNum",
+                                                        thumbnail = epStill ?: backdropUrl ?: posterUrl,
+                                                        description = epOverview ?: overview
+                                                    )
+                                                }
+                                            } else null
+                                        }
+                                    } catch (_: Throwable) { null }
+                                }
+                            }
+                            val fetchedEpisodes = deferredSeasons.awaitAll().filterNotNull().flatten()
+                            allEpisodes.addAll(fetchedEpisodes)
+                        }
+
+                        if (allEpisodes.isEmpty()) {
+                            seasonsInfo.forEach { (sNum, count) ->
+                                for (eNum in 1..(if (count > 0) count else 10)) {
+                                    allEpisodes.add(
+                                        EpisodeItem(
+                                            id = "$tmdbId:$sNum:$eNum",
+                                            title = "Episode $eNum",
+                                            seasonNumber = sNum,
+                                            episodeNumber = eNum,
+                                            data = "$tmdbId:$sNum:$eNum",
+                                            thumbnail = backdropUrl ?: posterUrl,
+                                            description = overview
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        allEpisodes.sortBy { it.seasonNumber * 1000 + it.episodeNumber }
                     }
                 }
             }
@@ -1377,16 +1428,23 @@ class MovyPlugin(
     }
 
     override suspend fun details(card: MediaCard): MediaDetails = withContext(Dispatchers.IO) {
+        val tmdbId = extractTmdbId(card.id)
+        val isTvCard = card.type == ContentType.TV_SERIES ||
+            mediaTypeCache[tmdbId] == MediaType.TV_SERIES ||
+            mediaTypeCache[card.id] == MediaType.TV_SERIES ||
+            card.id.contains("tv", ignoreCase = true)
         val item = MediaItem(
             id = card.id,
             title = card.title,
-            url = "https://www.movy.sx/${if (card.type == ContentType.TV_SERIES) "tv" else "movie"}/${card.id}",
+            url = "https://www.movy.sx/${if (isTvCard) "tv" else "movie"}/${card.id}",
             posterUrl = card.posterUrl,
             backdropUrl = card.backdropUrl,
-            type = if (card.type == ContentType.TV_SERIES) MediaType.TV_SERIES else MediaType.MOVIE
+            type = if (isTvCard) MediaType.TV_SERIES else MediaType.MOVIE
         )
         val d = getDetails(item)
 
+        val tmdbIdInt = tmdbId.toIntOrNull() ?: card.id.toIntOrNull() ?: 0
+        val isTv = d.type == MediaType.TV_SERIES || isTvCard
         val seasonsGrouped = d.episodes.groupBy { it.seasonNumber }.map { (sNum, eps) ->
             SeasonDescriptor(
                 seasonNumber = sNum,
@@ -1396,11 +1454,12 @@ class MovyPlugin(
                         seasonNumber = ep.seasonNumber,
                         episodeNumber = ep.episodeNumber,
                         title = ep.title,
+                        overview = ep.description,
                         stillUrl = ep.thumbnail,
-                        target = if (card.type == ContentType.TV_SERIES) {
-                            PlayableTarget.Episode(tmdbId = card.id.toInt(), season = ep.seasonNumber, episode = ep.episodeNumber, title = ep.title)
+                        target = if (isTv) {
+                            PlayableTarget.Episode(tmdbId = tmdbIdInt, season = ep.seasonNumber, episode = ep.episodeNumber, title = ep.title)
                         } else {
-                            PlayableTarget.Movie(tmdbId = card.id.toInt(), title = d.title, releaseYear = d.year)
+                            PlayableTarget.Movie(tmdbId = tmdbIdInt, title = d.title, releaseYear = d.year)
                         }
                     )
                 }
@@ -1417,9 +1476,9 @@ class MovyPlugin(
                 type = if (isTv) ContentType.TV_SERIES else ContentType.MOVIE,
                 releaseYear = rec.year,
                 target = if (isTv) {
-                    PlayableTarget.Episode(tmdbId = rec.id.toInt(), season = 1, episode = 1, title = rec.title)
+                    PlayableTarget.Episode(tmdbId = rec.id.toIntOrNull() ?: 0, season = 1, episode = 1, title = rec.title)
                 } else {
-                    PlayableTarget.Movie(tmdbId = rec.id.toInt(), title = rec.title, releaseYear = rec.year)
+                    PlayableTarget.Movie(tmdbId = rec.id.toIntOrNull() ?: 0, title = rec.title, releaseYear = rec.year)
                 }
             )
         }
@@ -1488,6 +1547,71 @@ class MovyPlugin(
         if (match != null) return match.groupValues[1]
         val digits = Regex("""\d+""").find(clean)
         return digits?.value ?: clean
+    }
+
+    private fun parseTarget(rawInput: String): TargetInfo {
+        val clean = rawInput.trim()
+
+        // 1. URI format: eup://movy/tv/{tmdbId}/{season}/{episode}
+        val eupTvMatch = Regex("""eup://movy/tv/(\d+)/(\d+)/(\d+)""").find(clean)
+        if (eupTvMatch != null) {
+            val (id, s, e) = eupTvMatch.destructured
+            return TargetInfo(id, true, s.toIntOrNull() ?: 1, e.toIntOrNull() ?: 1)
+        }
+
+        // 2. Query parameter format: ?season=X&episode=Y or ?seasonId=X&episodeId=Y
+        val sQueryMatch = Regex("""[?&]season(?:Id)?=(\d+)""").find(clean)
+        val eQueryMatch = Regex("""[?&]episode(?:Id)?=(\d+)""").find(clean)
+        if (sQueryMatch != null && eQueryMatch != null) {
+            val sNum = sQueryMatch.groupValues[1].toIntOrNull() ?: 1
+            val eNum = eQueryMatch.groupValues[1].toIntOrNull() ?: 1
+            val id = extractTmdbId(clean.substringBefore("?"))
+            return TargetInfo(id, true, sNum, eNum)
+        }
+
+        val cleanWithoutQuery = clean.substringBefore("?")
+
+        // 3. Colon format: tmdbId:season:episode or prefix:tmdbId:season:episode
+        if (cleanWithoutQuery.contains(":")) {
+            val parts = cleanWithoutQuery.split(":")
+            val digitParts = parts.filter { it.all { c -> c.isDigit() } && it.isNotEmpty() }
+            if (digitParts.size >= 3) {
+                val id = digitParts[0]
+                val sNum = digitParts[1].toIntOrNull() ?: 1
+                val eNum = digitParts[2].toIntOrNull() ?: 1
+                return TargetInfo(id, true, sNum, eNum)
+            }
+            if (parts.size >= 3) {
+                val id = extractTmdbId(parts[0])
+                val sNum = parts.getOrNull(1)?.toIntOrNull()
+                val eNum = parts.getOrNull(2)?.toIntOrNull()
+                if (id.isNotBlank() && sNum != null && eNum != null) {
+                    return TargetInfo(id, true, sNum, eNum)
+                }
+            }
+        }
+
+        // 4. Underscore format: tmdbId_season_episode
+        val underMatch = Regex("""^(\d+)_(\d+)_(\d+)$""").find(cleanWithoutQuery)
+        if (underMatch != null) {
+            val (id, s, e) = underMatch.destructured
+            return TargetInfo(id, true, s.toIntOrNull() ?: 1, e.toIntOrNull() ?: 1)
+        }
+
+        // 5. URL path format: /tv/{tmdbId}/{season}/{episode}
+        val pathTvMatch = Regex("""/tv/(\d+)/(\d+)/(\d+)""").find(cleanWithoutQuery)
+        if (pathTvMatch != null) {
+            val (id, s, e) = pathTvMatch.destructured
+            return TargetInfo(id, true, s.toIntOrNull() ?: 1, e.toIntOrNull() ?: 1)
+        }
+
+        // 6. Base TMDB ID and fallback
+        val tmdbId = extractTmdbId(cleanWithoutQuery)
+        val isTv = clean.contains("/tv/") || clean.contains("tv", ignoreCase = true) ||
+                mediaTypeCache[tmdbId] == MediaType.TV_SERIES ||
+                mediaTypeCache[clean] == MediaType.TV_SERIES ||
+                mediaTypeCache[rawInput] == MediaType.TV_SERIES
+        return TargetInfo(tmdbId, isTv, if (isTv) 1 else null, if (isTv) 1 else null)
     }
 
     private suspend fun fetchSessionSeed(mediaId: Long): String? = withContext(Dispatchers.IO) {
