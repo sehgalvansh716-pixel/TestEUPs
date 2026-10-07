@@ -94,7 +94,7 @@ class FreekzPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "freekz",
         name = "Freekz",
-        version = 1,
+        version = 2,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FreekzPlugin",
@@ -108,7 +108,8 @@ class FreekzPlugin(
             PluginCapability.TMDB_NATIVE
         ),
         author = "Euthopiar Core",
-        description = "High-speed multi-server streaming with Orion (Multi-Audio & Multi-Dub), Centaurus (Multi-Audio), Andromeda (HD), Atlas (Multi-HLS), Ursa/Meow, home carousel hero spotlights, 30+ categorized catalogs, TMDB bridging, AniSkip, and OpenSubtitles."
+        siteUrl = "https://freekz.to",
+        description = "High-speed multi-server streaming with Orion (Multi-Audio & Multi-Dub), Centaurus (Multi-Audio), Andromeda (HD), Atlas (Multi-HLS), Ursa/Meow, home carousel hero spotlights, 30+ categorized catalogs, full season/episode extraction, TMDB bridging, AniSkip, and OpenSubtitles."
     )
 
     private val tmdbApiKey = "3e20e76d6d210b6cb128d17d233b64dc"
@@ -143,24 +144,34 @@ class FreekzPlugin(
     }
 
     private class PluginHttp(externalClient: OkHttpClient?) : Closeable {
-        private val sharedPool = ConnectionPool(24, 5, TimeUnit.MINUTES)
+        private val sharedPool = ConnectionPool(32, 5, TimeUnit.MINUTES)
+
+        private val resolvedDns: Dns = externalClient?.dns ?: try {
+            com.euthopiar.core.network.DohDns.DEFAULT
+        } catch (_: Throwable) {
+            Dns.SYSTEM
+        }
 
         val meta: OkHttpClient = (externalClient?.newBuilder() ?: OkHttpClient.Builder())
+            .dns(resolvedDns)
             .connectionPool(sharedPool)
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(12, TimeUnit.SECONDS)
             .writeTimeout(12, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
             .build()
 
         val stream: OkHttpClient = (externalClient?.newBuilder() ?: OkHttpClient.Builder())
+            .dns(resolvedDns)
             .connectionPool(sharedPool)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
             .build()
 
         override fun close() {
@@ -175,6 +186,7 @@ class FreekzPlugin(
     private var hostApi: HostApi? = null
 
     // In-memory caches for fast resolution
+    private val mediaTypeCache = ConcurrentHashMap<String, MediaType>()
     private val imdbIdCache = ConcurrentHashMap<String, String>()
     private val metaDetailsCache = ConcurrentHashMap<String, TmdbDetailsMeta>()
 
@@ -196,6 +208,7 @@ class FreekzPlugin(
 
     override suspend fun destroy() {
         http.close()
+        mediaTypeCache.clear()
         imdbIdCache.clear()
         metaDetailsCache.clear()
     }
@@ -567,14 +580,30 @@ class FreekzPlugin(
             genres = d.genres,
             cast = d.cast.map { CastDescriptor(name = it.name, character = it.character, profileUrl = it.profileUrl) },
             seasons = seasonsGrouped,
-            logoUrl = d.logoUrl
+            logoUrl = d.logoUrl,
+            defaultTarget = card.target ?: if (isTv) {
+                PlayableTarget.Episode(
+                    tmdbId = card.id.toIntOrNull() ?: 0,
+                    season = 1,
+                    episode = 1,
+                    title = d.title
+                )
+            } else {
+                PlayableTarget.Movie(
+                    tmdbId = card.id.toIntOrNull() ?: 0,
+                    title = d.title,
+                    releaseYear = d.year
+                )
+            }
         )
     }
 
     override suspend fun getDetails(mediaItem: MediaItem): MediaDetail = withContext(Dispatchers.IO) {
-        val isTv = mediaItem.type == MediaType.TV_SERIES
-        val tmdbId = mediaItem.id
+        val rawTarget = parseTarget(mediaItem.id.ifBlank { mediaItem.url })
+        val tmdbId = rawTarget.tmdbId.ifBlank { mediaItem.id.filter { it.isDigit() } }
+        val isTv = mediaItem.type == MediaType.TV_SERIES || mediaItem.url.contains("/tv/") || rawTarget.mediaType == "tv"
         val mediaType = if (isTv) "tv" else "movie"
+        mediaTypeCache[tmdbId] = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE
 
         val url = "$tmdbBaseUrl/$mediaType/$tmdbId?api_key=$tmdbApiKey&append_to_response=credits,external_ids,images,videos"
         val req = Request.Builder()
@@ -587,7 +616,7 @@ class FreekzPlugin(
             val body = http.meta.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
             }
-            if (body.isBlank() || !body.startsWith("{")) return@withContext fallbackMediaDetail(mediaItem)
+            if (body.isBlank() || !body.startsWith("{")) return@withContext fallbackMediaDetail(mediaItem, tmdbId, isTv)
 
             val root = json.parseToJsonElement(body).jsonObject
             val title = root["title"]?.jsonPrimitive?.contentOrNull
@@ -640,56 +669,91 @@ class FreekzPlugin(
             val episodeItems = mutableListOf<EpisodeItem>()
             if (isTv) {
                 val rawSeasons = root["seasons"]?.jsonArray.orEmpty()
-                for (sItem in rawSeasons) {
+                val seasonFetches = rawSeasons.mapNotNull { sItem ->
                     val sObj = sItem.jsonObject
-                    val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: continue
-                    if (sNum <= 0 && rawSeasons.size > 1) continue
+                    val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
+                    if (sNum <= 0 && rawSeasons.size > 1) return@mapNotNull null
+                    val epCount = sObj["episode_count"]?.jsonPrimitive?.intOrNull ?: 10
+                    sNum to epCount
+                }
 
-                    try {
-                        val sReq = Request.Builder()
-                            .url("$tmdbBaseUrl/tv/$tmdbId/season/$sNum?api_key=$tmdbApiKey")
-                            .header("User-Agent", defaultUserAgent)
-                            .header("Accept", "application/json")
-                            .build()
-                        http.meta.newCall(sReq).execute().use { sResp ->
-                            if (sResp.isSuccessful) {
-                                val sBody = sResp.body?.string().orEmpty()
-                                val sJson = json.parseToJsonElement(sBody).jsonObject
-                                val eps = sJson["episodes"]?.jsonArray.orEmpty()
-                                for (ep in eps) {
-                                    val epObj = ep.jsonObject
-                                    val epNum = epObj["episode_number"]?.jsonPrimitive?.intOrNull ?: continue
-                                    val epName = epObj["name"]?.jsonPrimitive?.contentOrNull ?: "Episode $epNum"
-                                    val stillPath = epObj["still_path"]?.jsonPrimitive?.contentOrNull
-                                    val epOverview = epObj["overview"]?.jsonPrimitive?.contentOrNull
+                // Fetch season episodes in parallel for instant loading of all seasons & episodes
+                val fetchedSeasons = coroutineScope {
+                    seasonFetches.map { (sNum, fallbackEpCount) ->
+                        async {
+                            val eps = mutableListOf<EpisodeItem>()
+                            try {
+                                val sReq = Request.Builder()
+                                    .url("$tmdbBaseUrl/tv/$tmdbId/season/$sNum?api_key=$tmdbApiKey")
+                                    .header("User-Agent", defaultUserAgent)
+                                    .header("Accept", "application/json")
+                                    .build()
+                                http.meta.newCall(sReq).execute().use { sResp ->
+                                    if (sResp.isSuccessful) {
+                                        val sBody = sResp.body?.string().orEmpty()
+                                        if (sBody.startsWith("{")) {
+                                            val sJson = json.parseToJsonElement(sBody).jsonObject
+                                            val sEps = sJson["episodes"]?.jsonArray.orEmpty()
+                                            for (ep in sEps) {
+                                                val epObj = ep.jsonObject
+                                                val epNum = epObj["episode_number"]?.jsonPrimitive?.intOrNull ?: continue
+                                                val epName = epObj["name"]?.jsonPrimitive?.contentOrNull ?: "Episode $epNum"
+                                                val stillPath = epObj["still_path"]?.jsonPrimitive?.contentOrNull
+                                                val epOverview = epObj["overview"]?.jsonPrimitive?.contentOrNull
+                                                val epDuration = epObj["runtime"]?.jsonPrimitive?.intOrNull
 
-                                    val payload = buildJsonObject {
-                                        put("tmdbId", tmdbId)
-                                        put("type", "tv")
-                                        put("season", sNum)
-                                        put("episode", epNum)
-                                        put("title", title)
-                                        put("year", year?.toString() ?: "")
-                                        put("releaseDate", releaseDate)
-                                        if (imdbId != null) put("imdbId", imdbId)
-                                    }.toString()
+                                                eps.add(
+                                                    EpisodeItem(
+                                                        id = "$tmdbId:$sNum:$epNum",
+                                                        title = epName,
+                                                        seasonNumber = sNum,
+                                                        episodeNumber = epNum,
+                                                        data = "eup://freekz/$tmdbId/$sNum/$epNum",
+                                                        thumbnail = stillPath?.let { "https://image.tmdb.org/t/p/w300$it" } ?: backdrop ?: poster,
+                                                        description = epOverview,
+                                                        duration = epDuration?.let { "${it}m" }
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (_: Throwable) {}
 
-                                    episodeItems.add(
+                            // Fallback guarantee: if season details endpoint fails, synthesize episodes from episode_count!
+                            if (eps.isEmpty() && fallbackEpCount > 0) {
+                                for (epNum in 1..fallbackEpCount) {
+                                    eps.add(
                                         EpisodeItem(
-                                            id = "$tmdbId-s$sNum-e$epNum",
-                                            title = epName,
+                                            id = "$tmdbId:$sNum:$epNum",
+                                            title = "Episode $epNum",
                                             seasonNumber = sNum,
                                             episodeNumber = epNum,
-                                            data = payload,
-                                            thumbnail = stillPath?.let { "https://image.tmdb.org/t/p/w300$it" },
-                                            description = epOverview
+                                            data = "eup://freekz/$tmdbId/$sNum/$epNum",
+                                            thumbnail = backdrop ?: poster,
+                                            description = "Season $sNum Episode $epNum"
                                         )
                                     )
                                 }
                             }
+                            eps
                         }
-                    } catch (_: Throwable) {}
+                    }.awaitAll().flatten()
                 }
+
+                episodeItems.addAll(fetchedSeasons)
+            } else {
+                // Movie: add playable single episode item
+                episodeItems.add(
+                    EpisodeItem(
+                        id = tmdbId,
+                        title = title,
+                        seasonNumber = 1,
+                        episodeNumber = 1,
+                        data = "eup://freekz/$tmdbId",
+                        thumbnail = backdrop ?: poster
+                    )
+                )
             }
 
             MediaDetail(
@@ -713,21 +777,47 @@ class FreekzPlugin(
             throw ce
         } catch (t: Throwable) {
             safeLog("FreekzPlugin", "getDetails error: ${t.message}", t)
-            fallbackMediaDetail(mediaItem)
+            fallbackMediaDetail(mediaItem, tmdbId, isTv)
         }
     }
 
-    private fun fallbackMediaDetail(mediaItem: MediaItem): MediaDetail = MediaDetail(
-        id = mediaItem.id,
-        title = mediaItem.title,
-        url = mediaItem.url,
-        posterUrl = mediaItem.posterUrl,
-        backdropUrl = mediaItem.backdropUrl,
-        type = mediaItem.type,
-        year = mediaItem.year,
-        synopsis = null,
-        provider = name
-    )
+    private fun fallbackMediaDetail(mediaItem: MediaItem, tmdbId: String, isTv: Boolean): MediaDetail {
+        val epList = if (isTv) {
+            (1..10).map { epNum ->
+                EpisodeItem(
+                    id = "$tmdbId:1:$epNum",
+                    title = "Episode $epNum",
+                    seasonNumber = 1,
+                    episodeNumber = epNum,
+                    data = "eup://freekz/$tmdbId/1/$epNum",
+                    thumbnail = mediaItem.backdropUrl ?: mediaItem.posterUrl
+                )
+            }
+        } else {
+            listOf(
+                EpisodeItem(
+                    id = tmdbId,
+                    title = mediaItem.title,
+                    seasonNumber = 1,
+                    episodeNumber = 1,
+                    data = "eup://freekz/$tmdbId",
+                    thumbnail = mediaItem.backdropUrl ?: mediaItem.posterUrl
+                )
+            )
+        }
+        return MediaDetail(
+            id = tmdbId,
+            title = mediaItem.title,
+            url = mediaItem.url,
+            posterUrl = mediaItem.posterUrl,
+            backdropUrl = mediaItem.backdropUrl,
+            type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE,
+            year = mediaItem.year,
+            synopsis = null,
+            episodes = epList,
+            provider = name
+        )
+    }
 
     override suspend fun resolveLogo(mediaItem: MediaItem): String? = withContext(Dispatchers.IO) {
         try {
@@ -752,24 +842,26 @@ class FreekzPlugin(
     }
 
     // ───────────────────────────── Target Resolution Parsing ─────────────────────────────
-    private data class ParsedPlayable(
+    data class ParsedPlayable(
         val tmdbId: String,
         val mediaType: String, // "movie" or "tv"
         val season: Int?,
         val episode: Int?,
-        val title: String,
-        val year: String,
-        val releaseDate: String,
-        val imdbId: String?
+        val title: String = "",
+        val year: String = "",
+        val releaseDate: String = "",
+        val imdbId: String? = null
     )
 
-    private fun parseTarget(mediaId: String, episodeData: String?): ParsedPlayable {
-        val payload = episodeData ?: mediaId
+    private fun parseTarget(mediaId: String, episodeData: String? = null): ParsedPlayable {
+        val payload = (episodeData ?: mediaId).trim()
+
+        // 1. JSON payload
         if (payload.startsWith("{") && payload.contains("tmdbId")) {
             try {
                 val obj = json.parseToJsonElement(payload).jsonObject
                 val tmdbId = obj["tmdbId"]?.jsonPrimitive?.contentOrNull ?: ""
-                val type = obj["type"]?.jsonPrimitive?.contentOrNull ?: "movie"
+                val type = obj["type"]?.jsonPrimitive?.contentOrNull ?: if (mediaTypeCache[tmdbId] == MediaType.TV_SERIES) "tv" else "movie"
                 val season = obj["season"]?.jsonPrimitive?.intOrNull
                 val episode = obj["episode"]?.jsonPrimitive?.intOrNull
                 val title = obj["title"]?.jsonPrimitive?.contentOrNull ?: ""
@@ -780,21 +872,78 @@ class FreekzPlugin(
             } catch (_: Throwable) {}
         }
 
-        // If mediaId is plain TMDB id or URL
-        val cleanId = payload.substringAfterLast("/").substringBefore("?").substringBefore("-")
-        val isTv = payload.contains("/tv/") || payload.contains("tv")
-        val meta = metaDetailsCache[cleanId]
-        val imdb = imdbIdCache[cleanId] ?: meta?.imdbId
+        // 2. Virtual eup:// URI: eup://freekz/<tmdbId>/<season>/<episode> or eup://freekz/<tmdbId>
+        if (payload.startsWith("eup://", ignoreCase = true)) {
+            val withoutScheme = payload.substring(6)
+            val parts = withoutScheme.split('/', ':').filter { it.isNotBlank() }
+            val cleanParts = if (parts.firstOrNull()?.equals("freekz", ignoreCase = true) == true) {
+                parts.drop(1)
+            } else {
+                parts
+            }
+            val id = cleanParts.firstOrNull()?.filter { it.isDigit() }.orEmpty()
+            if (cleanParts.size >= 3) {
+                val s = cleanParts[1].toIntOrNull() ?: 1
+                val e = cleanParts[2].toIntOrNull() ?: 1
+                return ParsedPlayable(id, "tv", s, e)
+            } else if (cleanParts.size == 2) {
+                val s = cleanParts[1].toIntOrNull() ?: 1
+                return ParsedPlayable(id, "tv", s, 1)
+            } else {
+                val isTv = mediaTypeCache[id] == MediaType.TV_SERIES
+                return ParsedPlayable(id, if (isTv) "tv" else "movie", if (isTv) 1 else null, if (isTv) 1 else null)
+            }
+        }
 
+        // 3. HTTP(S) URL
+        if (payload.startsWith("http://", ignoreCase = true) || payload.startsWith("https://", ignoreCase = true)) {
+            val uri = try { java.net.URI(payload) } catch (_: Throwable) { null }
+            val pathSegments = uri?.path?.split('/')?.filter { it.isNotBlank() }.orEmpty()
+            val isTv = pathSegments.any { it.equals("tv", ignoreCase = true) || it.equals("series", ignoreCase = true) }
+            val id = pathSegments.firstOrNull { seg -> seg.isNotEmpty() && seg.all { it.isDigit() } }
+                ?: payload.filter { it.isDigit() }
+            if (isTv) {
+                val tvIdx = pathSegments.indexOfFirst { it.equals("tv", ignoreCase = true) }
+                val s = pathSegments.getOrNull(tvIdx + 2)?.toIntOrNull() ?: 1
+                val e = pathSegments.getOrNull(tvIdx + 3)?.toIntOrNull() ?: 1
+                return ParsedPlayable(id, "tv", s, e)
+            } else {
+                return ParsedPlayable(id, "movie", null, null)
+            }
+        }
+
+        // 4. Colon format: <tmdbId>:<season>:<episode> or <tmdbId>:<season>
+        if (payload.contains(':')) {
+            val parts = payload.split(':')
+            val id = parts[0].filter { it.isDigit() }
+            val s = parts.getOrNull(1)?.toIntOrNull() ?: 1
+            val e = parts.getOrNull(2)?.toIntOrNull() ?: 1
+            return ParsedPlayable(id, "tv", s, e)
+        }
+
+        // 5. Dash format: <tmdbId>-s<season>-e<episode>
+        val sRegex = Regex("""(\d+)[-_]s(\d+)[-_]e(\d+)""", RegexOption.IGNORE_CASE)
+        val sMatch = sRegex.find(payload)
+        if (sMatch != null) {
+            val id = sMatch.groupValues[1]
+            val s = sMatch.groupValues[2].toIntOrNull() ?: 1
+            val e = sMatch.groupValues[3].toIntOrNull() ?: 1
+            return ParsedPlayable(id, "tv", s, e)
+        }
+
+        // 6. Plain numeric ID
+        val id = payload.filter { it.isDigit() }
+        val isTv = mediaTypeCache[id] == MediaType.TV_SERIES || mediaTypeCache[payload] == MediaType.TV_SERIES
+        val meta = metaDetailsCache[id]
         return ParsedPlayable(
-            tmdbId = cleanId,
+            tmdbId = id,
             mediaType = if (isTv) "tv" else "movie",
-            season = 1,
-            episode = 1,
+            season = if (isTv) 1 else null,
+            episode = if (isTv) 1 else null,
             title = meta?.title ?: "",
             year = meta?.year ?: "",
             releaseDate = meta?.releaseDate ?: "",
-            imdbId = imdb
+            imdbId = meta?.imdbId ?: imdbIdCache[id]
         )
     }
 
@@ -884,30 +1033,34 @@ class FreekzPlugin(
         onSubFound: suspend (SubtitleTrack) -> Unit = {},
         onStatus: suspend (String, String) -> Unit = { _, _ -> }
     ) = coroutineScope {
-        val tmdbId = parsed.tmdbId
-        val mediaType = parsed.mediaType
-        val isTv = mediaType == "tv"
+        val tmdbId = parsed.tmdbId.ifBlank { return@coroutineScope }
+        val isTv = parsed.mediaType == "tv" || mediaTypeCache[tmdbId] == MediaType.TV_SERIES
+        val mediaType = if (isTv) "tv" else "movie"
         val season = parsed.season ?: 1
         val episode = parsed.episode ?: 1
 
         // 1. Ensure Metadata is loaded (Title, Year, ReleaseDate, IMDb ID)
         val meta = if (parsed.title.isBlank() || parsed.releaseDate.isBlank() || parsed.imdbId.isNullOrBlank()) {
-            try {
+            metaDetailsCache[tmdbId] ?: try {
                 val detailUrl = "$tmdbBaseUrl/$mediaType/$tmdbId?api_key=$tmdbApiKey&append_to_response=external_ids"
                 val dReq = Request.Builder().url(detailUrl).header("User-Agent", defaultUserAgent).build()
                 http.meta.newCall(dReq).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val body = resp.body?.string().orEmpty()
-                        val root = json.parseToJsonElement(body).jsonObject
-                        val title = root["title"]?.jsonPrimitive?.contentOrNull
-                            ?: root["name"]?.jsonPrimitive?.contentOrNull ?: "Media $tmdbId"
-                        val relDate = root["release_date"]?.jsonPrimitive?.contentOrNull
-                            ?: root["first_air_date"]?.jsonPrimitive?.contentOrNull ?: ""
-                        val yr = relDate.take(4)
-                        val imdb = root["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull
-                            ?: root["imdb_id"]?.jsonPrimitive?.contentOrNull
-                        if (imdb != null) imdbIdCache[tmdbId] = imdb
-                        TmdbDetailsMeta(title, yr, relDate, imdb)
+                        if (body.startsWith("{")) {
+                            val root = json.parseToJsonElement(body).jsonObject
+                            val title = root["title"]?.jsonPrimitive?.contentOrNull
+                                ?: root["name"]?.jsonPrimitive?.contentOrNull ?: "Media $tmdbId"
+                            val relDate = root["release_date"]?.jsonPrimitive?.contentOrNull
+                                ?: root["first_air_date"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val yr = relDate.take(4)
+                            val imdb = root["external_ids"]?.jsonObject?.get("imdb_id")?.jsonPrimitive?.contentOrNull
+                                ?: root["imdb_id"]?.jsonPrimitive?.contentOrNull
+                            if (imdb != null) imdbIdCache[tmdbId] = imdb
+                            val m = TmdbDetailsMeta(title, yr, relDate, imdb)
+                            metaDetailsCache[tmdbId] = m
+                            m
+                        } else null
                     } else null
                 }
             } catch (_: Throwable) { null }
@@ -1115,12 +1268,17 @@ class FreekzPlugin(
                                 val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
                                 val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
                                 val isHls = type == "hls" || fullUrl.contains(".m3u8")
+                                val taggedUrl = if (isHls) {
+                                    if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
+                                } else {
+                                    if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
+                                }
 
                                 val serverLabel = "Freekz - Orion [Original Audio]"
                                 emitResolvedSource(
                                     sourceId = "freekz_orion_orig_${fullUrl.hashCode().toString(16)}",
                                     serverName = serverLabel,
-                                    url = fullUrl,
+                                    url = taggedUrl,
                                     quality = if (res == "0" || res == "null") "1080p" else res,
                                     isHls = isHls,
                                     audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 6, "aac")),
@@ -1154,12 +1312,13 @@ class FreekzPlugin(
                                         val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
                                         val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
                                         val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
+                                        val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
 
                                         val label = "Freekz - Orion [$lanName]"
                                         emitResolvedSource(
                                             sourceId = "freekz_orion_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
                                             serverName = label,
-                                            url = fullDubUrl,
+                                            url = taggedDubUrl,
                                             quality = "1080p",
                                             isHls = false,
                                             audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
@@ -1198,12 +1357,13 @@ class FreekzPlugin(
                             try {
                                 val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
                                 val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
 
                                 val serverLabel = "Freekz - Centaurus [Original Audio]"
                                 emitResolvedSource(
                                     sourceId = "freekz_cent_orig_${fullUrl.hashCode().toString(16)}",
                                     serverName = serverLabel,
-                                    url = fullUrl,
+                                    url = taggedUrl,
                                     quality = if (res == "0" || res == "null") "1080p" else res,
                                     isHls = false,
                                     audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 6, "aac")),
@@ -1237,12 +1397,13 @@ class FreekzPlugin(
                                         val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
                                         val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
                                         val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
+                                        val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
 
                                         val label = "Freekz - Centaurus [$lanName]"
                                         emitResolvedSource(
                                             sourceId = "freekz_cent_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
                                             serverName = label,
-                                            url = fullDubUrl,
+                                            url = taggedDubUrl,
                                             quality = "1080p",
                                             isHls = false,
                                             audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
@@ -1280,11 +1441,12 @@ class FreekzPlugin(
                             try {
                                 val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
                                 val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
 
                                 emitResolvedSource(
                                     sourceId = "freekz_andro_${fullUrl.hashCode().toString(16)}",
                                     serverName = "Freekz - Andromeda [HD 1080p]",
-                                    url = fullUrl,
+                                    url = taggedUrl,
                                     quality = "1080p",
                                     isHls = false,
                                     audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "aac")),
@@ -1323,13 +1485,14 @@ class FreekzPlugin(
                             try {
                                 val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
                                 val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
 
                                 val label = "Freekz - Atlas [HLS Mirror $mirrorIndex]"
                                 mirrorIndex++
                                 emitResolvedSource(
                                     sourceId = "freekz_atlas_${mirrorIndex}_${fullUrl.hashCode().toString(16)}",
                                     serverName = label,
-                                    url = fullUrl,
+                                    url = taggedUrl,
                                     quality = "Auto",
                                     isHls = true,
                                     audioTracks = listOf(CoreAudioTrackDescriptor("Original", "en", 2, "aac")),
@@ -1367,11 +1530,12 @@ class FreekzPlugin(
                             try {
                                 val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
                                 val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
+                                val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#hls.m3u8"
 
                                 emitResolvedSource(
                                     sourceId = "freekz_ursa_${fullUrl.hashCode().toString(16)}",
                                     serverName = "Freekz - Ursa [HLS Stream]",
-                                    url = fullUrl,
+                                    url = taggedUrl,
                                     quality = "Auto",
                                     isHls = true,
                                     audioTracks = listOf(CoreAudioTrackDescriptor("Original", "en", 2, "aac")),
