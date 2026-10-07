@@ -95,7 +95,7 @@ class BingrPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "bingr",
         name = "Bingr",
-        version = 3,
+        version = 4,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.BingrPlugin",
@@ -1029,6 +1029,7 @@ class BingrPlugin(
     }
 
     // ───────────────────────────── Stream Parsing Helpers ─────────────────────────────
+    // ───────────────────────────── Stream Parsing Helpers ─────────────────────────────
     private suspend fun parseVidriftHtml(
         html: String,
         tmdbId: Int,
@@ -1040,13 +1041,99 @@ class BingrPlugin(
         emittedKeys: MutableSet<String>,
         onEmit: suspend (EupStreamSource, CoreStreamSource) -> Unit
     ) {
-        val metaRegex = Regex("""var\s+embedMeta\s*=\s*(\{.*?\});\s*(?:var|let|const|</script>)""", RegexOption.DOT_MATCHES_ALL)
-        val match = metaRegex.find(html) ?: return
-        val rawJson = match.groupValues[1]
+        val metaIdx = html.indexOf("var embedMeta = ")
+        if (metaIdx == -1) return
+        val startBrace = html.indexOf('{', metaIdx)
+        if (startBrace == -1) return
+        var depth = 0
+        var endBrace = -1
+        for (i in startBrace until html.length) {
+            val c = html[i]
+            if (c == '{') depth++
+            else if (c == '}') {
+                depth--
+                if (depth == 0) {
+                    endBrace = i + 1
+                    break
+                }
+            }
+        }
+        if (endBrace == -1) return
+        val rawJson = html.substring(startBrace, endBrace)
 
         val root = try {
             json.parseToJsonElement(rawJson).jsonObject
         } catch (_: Throwable) { return }
+
+        // 0. Parse evionUrl (Direct HLS Stream for TV Series like The Boys, Stranger Things, Game of Thrones)
+        val evionUrl = root["evionUrl"]?.jsonPrimitive?.contentOrNull
+        if (!evionUrl.isNullOrBlank() && evionUrl.startsWith("http") && emittedKeys.add(evionUrl)) {
+            val sourceId = "bingr:vidrift:evion:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
+            val headers = mapOf(
+                "Referer" to "https://embed.vidrift.in/",
+                "Origin" to "https://embed.vidrift.in",
+                "User-Agent" to (eupHost?.defaultUserAgent ?: defaultUserAgent)
+            )
+
+            val audioTracks = listOf(
+                EupAudioTrackDescriptor(
+                    label = "English (Stereo AAC)",
+                    language = "en",
+                    isDefault = true,
+                    codec = "aac",
+                    channelCount = 2
+                )
+            )
+
+            val coreAudio = listOf(
+                CoreAudioTrackDescriptor(
+                    languageName = "English",
+                    isoCode = "en",
+                    channels = 2,
+                    codec = "AAC"
+                )
+            )
+
+            val eupSource = EupStreamSource(
+                id = sourceId,
+                serverId = "vidrift_evion",
+                serverLabel = "Vidrift Evion (1080p Direct HLS)",
+                url = evionUrl,
+                kind = StreamKind.HLS,
+                headers = HeaderPolicy(sticky = headers),
+                video = VideoInfo(height = 1080),
+                audioTracks = audioTracks,
+                subtitles = eupSubs,
+                introOffsetMs = introOffsetMs,
+                expiresAtEpochMs = System.currentTimeMillis() + (25 * 60_000L),
+                refreshHandle = "v1|evion"
+            )
+
+            val coreSource = CoreStreamSource(
+                url = evionUrl,
+                serverName = "Vidrift Evion (Direct HLS)",
+                resolutionLabel = "1080p FHD",
+                quality = "Bingr Vidrift Evion [1080p Direct HLS]",
+                isM3u8 = true,
+                audioTracks = coreAudio,
+                releaseType = AudioReleaseType.ORIGINAL,
+                headers = headers
+            )
+
+            sourceEntries[sourceId] = CachedSourceEntry(
+                tmdbId = tmdbId.toString(),
+                isTv = isTv,
+                season = season,
+                episode = episode,
+                serverId = "vidrift_evion",
+                gen = 1,
+                realUrl = evionUrl,
+                realSource = eupSource,
+                expiresAtMs = System.currentTimeMillis() + (25 * 60_000L)
+            )
+
+            onEmit(eupSource, coreSource)
+        }
 
         // 1. Parse warmStreams (Relay HLS)
         val warmStreams = root["warmStreams"]?.jsonArray
@@ -1134,7 +1221,7 @@ class BingrPlugin(
                 val streamType = oObj["type"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "hls"
                 val isMp4 = streamType == "mp4"
 
-                val streamUrl = if (rawUrl.startsWith("/")) "https://mb.vidrift.net$rawUrl" else rawUrl
+                val streamUrl = if (rawUrl.startsWith("/")) "$vidriftBaseUrl$rawUrl" else rawUrl
                 if (!streamUrl.startsWith("http") || !emittedKeys.add(streamUrl)) continue
 
                 var rungHeight = 1080
@@ -1154,17 +1241,22 @@ class BingrPlugin(
 
                 val (audioLang, audioIso, relType) = when {
                     streamName.contains("Hindi", ignoreCase = true) -> Triple("Hindi Dub", "hi", AudioReleaseType.DUB)
+                    streamName.contains("Tamil", ignoreCase = true) -> Triple("Tamil Dub", "ta", AudioReleaseType.DUB)
+                    streamName.contains("Telugu", ignoreCase = true) -> Triple("Telugu Dub", "te", AudioReleaseType.DUB)
+                    streamName.contains("Bangla", ignoreCase = true) || streamName.contains("Bengali", ignoreCase = true) -> Triple("Bangla Dub", "bn", AudioReleaseType.DUB)
+                    streamName.contains("Arabic", ignoreCase = true) -> Triple("Arabic Dub", "ar", AudioReleaseType.DUB)
                     streamName.contains("French", ignoreCase = true) -> Triple("French Dub", "fr", AudioReleaseType.DUB)
                     streamName.contains("Russian", ignoreCase = true) -> Triple("Russian Dub", "ru", AudioReleaseType.DUB)
                     streamName.contains("Latin", ignoreCase = true) -> Triple("Spanish (LatAm) Dub", "es", AudioReleaseType.DUB)
                     streamName.contains("Spanish", ignoreCase = true) -> Triple("Spanish Dub", "es", AudioReleaseType.DUB)
                     streamName.contains("Portuguese", ignoreCase = true) || streamName.contains("Brazilian", ignoreCase = true) -> Triple("Brazilian Portuguese Dub", "pt", AudioReleaseType.DUB)
                     streamName.contains("Ukrainian", ignoreCase = true) -> Triple("Ukrainian Dub", "uk", AudioReleaseType.DUB)
-                    else -> Triple("Original English", "en", AudioReleaseType.ORIGINAL)
+                    streamName.contains("English", ignoreCase = true) -> Triple("English Dub", "en", AudioReleaseType.DUB)
+                    else -> Triple("Original Audio", "en", AudioReleaseType.ORIGINAL)
                 }
 
-                val cleanServerTag = streamName.replace("Orion", "").replace("·", "").trim().ifBlank { "Original" }
-                val sourceId = "bingr:vidrift:orion:${cleanServerTag.lowercase()}:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
+                val cleanServerTag = streamName.replace("Orion", "").replace("·", "").replace("-", "").trim().ifBlank { "Original" }
+                val sourceId = "bingr:vidrift:orion:${cleanServerTag.filter { it.isLetterOrDigit() }.lowercase()}:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
                 val headers = mapOf(
                     "Referer" to "https://embed.vidrift.in/",
                     "Origin" to "https://embed.vidrift.in",
@@ -1224,7 +1316,7 @@ class BingrPlugin(
                     isTv = isTv,
                     season = season,
                     episode = episode,
-                    serverId = "orion_${cleanServerTag.lowercase()}",
+                    serverId = "orion_${cleanServerTag.filter { it.isLetterOrDigit() }.lowercase()}",
                     gen = 1,
                     realUrl = streamUrl,
                     realSource = eupSource,
@@ -1616,10 +1708,12 @@ class BingrPlugin(
         // 3. Cluster 1: Vidrift Orion Multi-Audio
         val vidriftJob = launch {
             if (tmdbId <= 0) return@launch
-            withTimeoutOrNull(4500L) {
+            withTimeoutOrNull(12000L) {
                 try {
-                    val vidriftUrl = if (isTv && season != null && episode != null) {
+                    val vidriftUrl = if ((isTv || isAnime) && season != null && episode != null) {
                         "$vidriftBaseUrl/embed/tv/$tmdbId/$season/$episode"
+                    } else if (isTv || isAnime) {
+                        "$vidriftBaseUrl/embed/tv/$tmdbId/1/1"
                     } else {
                         "$vidriftBaseUrl/embed/movie/$tmdbId"
                     }
