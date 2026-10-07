@@ -101,7 +101,7 @@ class MovyPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "movy",
         name = "Movy",
-        version = 4,
+        version = 5,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.MovyPlugin",
@@ -926,7 +926,6 @@ class MovyPlugin(
                                     ?: return@mapNotNull null
                                 val mediaTypeStr = obj["media_type"]?.jsonPrimitive?.contentOrNull
                                 val isTv = mediaTypeStr == "tv" || url.contains("/tv/") || url.contains("/tv?")
-                                mediaTypeCache[id] = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE
                                 val posterPath = obj["poster_path"]?.jsonPrimitive?.contentOrNull
                                 val backdropPath = obj["backdrop_path"]?.jsonPrimitive?.contentOrNull
 
@@ -1301,81 +1300,66 @@ class MovyPlugin(
                     }
 
                     if (isTv) {
-                        val seasonsArr = obj["seasons"]?.jsonArray
-                        val seasonsInfo = mutableListOf<Pair<Int, Int>>()
-                        if (seasonsArr != null) {
-                            for (sElem in seasonsArr) {
-                                val sObj = sElem.jsonObject
-                                val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: continue
-                                val count = sObj["episode_count"]?.jsonPrimitive?.intOrNull ?: 0
-                                if (sNum > 0) {
-                                    seasonsInfo.add(sNum to count)
-                                }
-                            }
-                        }
-                        if (seasonsInfo.isEmpty()) {
-                            val numSeasons = obj["number_of_seasons"]?.jsonPrimitive?.intOrNull ?: 1
-                            for (s in 1..numSeasons) {
-                                seasonsInfo.add(s to 10)
-                            }
-                        }
-
-                        coroutineScope {
-                            val deferredSeasons = seasonsInfo.map { (sNum, _) ->
-                                async {
-                                    try {
-                                        val sUrl = "https://api.themoviedb.org/3/tv/$tmdbId/season/$sNum?api_key=$tmdbApiKey"
-                                        val sReq = Request.Builder().url(sUrl).build()
-                                        http.meta.newCall(sReq).execute().use { sResp ->
-                                            if (sResp.isSuccessful) {
-                                                val sBody = sResp.body?.string().orEmpty()
-                                                val sObj = json.parseToJsonElement(sBody).jsonObject
-                                                val epArr = sObj["episodes"]?.jsonArray
-                                                epArr?.mapNotNull { epElem ->
-                                                    val epObj = epElem.jsonObject
-                                                    val epNum = epObj["episode_number"]?.jsonPrimitive?.intOrNull ?: return@mapNotNull null
-                                                    val epName = epObj["name"]?.jsonPrimitive?.contentOrNull ?: "Episode $epNum"
-                                                    val epStill = epObj["still_path"]?.jsonPrimitive?.contentOrNull?.let {
-                                                        "https://image.tmdb.org/t/p/w300$it"
-                                                    }
-                                                    val epOverview = epObj["overview"]?.jsonPrimitive?.contentOrNull
-                                                    EpisodeItem(
-                                                        id = "$tmdbId:$sNum:$epNum",
-                                                        title = epName,
-                                                        seasonNumber = sNum,
-                                                        episodeNumber = epNum,
-                                                        data = "$tmdbId:$sNum:$epNum",
-                                                        thumbnail = epStill ?: backdropUrl ?: posterUrl,
-                                                        description = epOverview ?: overview
-                                                    )
-                                                }
-                                            } else null
+                        val numSeasons = (obj["number_of_seasons"]?.jsonPrimitive?.intOrNull ?: 1).coerceAtMost(30)
+                        for (sNum in 1..numSeasons) {
+                            try {
+                                val sUrl = "https://api.themoviedb.org/3/tv/$tmdbId/season/$sNum?api_key=$tmdbApiKey"
+                                val sReq = Request.Builder().url(sUrl).build()
+                                http.meta.newCall(sReq).execute().use { sResp ->
+                                    if (sResp.isSuccessful) {
+                                        val sBody = sResp.body?.string().orEmpty()
+                                        val sObj = json.parseToJsonElement(sBody).jsonObject
+                                        val epArr = sObj["episodes"]?.jsonArray
+                                        epArr?.forEach { epElem ->
+                                            val epObj = epElem.jsonObject
+                                            val epNum = epObj["episode_number"]?.jsonPrimitive?.intOrNull ?: return@forEach
+                                            val epName = epObj["name"]?.jsonPrimitive?.contentOrNull ?: "Episode $epNum"
+                                            val epStill = epObj["still_path"]?.jsonPrimitive?.contentOrNull?.let {
+                                                "https://image.tmdb.org/t/p/w300$it"
+                                            }
+                                            val epOverview = epObj["overview"]?.jsonPrimitive?.contentOrNull
+                                            val epDetail = EpisodeItem(
+                                                id = "$tmdbId:$sNum:$epNum",
+                                                title = epName,
+                                                seasonNumber = sNum,
+                                                episodeNumber = epNum,
+                                                data = "$tmdbId:$sNum:$epNum",
+                                                thumbnail = epStill ?: backdropUrl ?: posterUrl,
+                                                description = epOverview ?: overview
+                                            )
+                                            allEpisodes.add(epDetail)
                                         }
-                                    } catch (_: Throwable) { null }
+                                    }
                                 }
-                            }
-                            val fetchedEpisodes = deferredSeasons.awaitAll().filterNotNull().flatten()
-                            allEpisodes.addAll(fetchedEpisodes)
+                            } catch (_: Throwable) {}
                         }
 
+                        // Fallback if TMDB season details failed to populate episodes
                         if (allEpisodes.isEmpty()) {
-                            seasonsInfo.forEach { (sNum, count) ->
-                                for (eNum in 1..(if (count > 0) count else 10)) {
-                                    allEpisodes.add(
-                                        EpisodeItem(
-                                            id = "$tmdbId:$sNum:$eNum",
-                                            title = "Episode $eNum",
-                                            seasonNumber = sNum,
-                                            episodeNumber = eNum,
-                                            data = "$tmdbId:$sNum:$eNum",
-                                            thumbnail = backdropUrl ?: posterUrl,
-                                            description = overview
-                                        )
-                                    )
+                            val seasonsArr = obj["seasons"]?.jsonArray
+                            if (seasonsArr != null) {
+                                for (sElem in seasonsArr) {
+                                    val sObj = sElem.jsonObject
+                                    val sNum = sObj["season_number"]?.jsonPrimitive?.intOrNull ?: continue
+                                    val count = sObj["episode_count"]?.jsonPrimitive?.intOrNull ?: 0
+                                    if (sNum > 0) {
+                                        for (eNum in 1..(if (count > 0) count else 10)) {
+                                            allEpisodes.add(
+                                                EpisodeItem(
+                                                    id = "$tmdbId:$sNum:$eNum",
+                                                    title = "Episode $eNum",
+                                                    seasonNumber = sNum,
+                                                    episodeNumber = eNum,
+                                                    data = "$tmdbId:$sNum:$eNum",
+                                                    thumbnail = backdropUrl ?: posterUrl,
+                                                    description = overview
+                                                )
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
-                        allEpisodes.sortBy { it.seasonNumber * 1000 + it.episodeNumber }
                     }
                 }
             }
@@ -1403,7 +1387,9 @@ class MovyPlugin(
             allEpisodes.add(movieEp)
         }
 
-        val resolvedLogo = resolveLogo(mediaItem.copy(id = tmdbId, type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE))
+        val resolvedLogo = try {
+            resolveLogo(mediaItem.copy(id = tmdbId, type = if (isTv) MediaType.TV_SERIES else MediaType.MOVIE))
+        } catch (_: Throwable) { null }
 
         MediaDetail(
             id = tmdbId,
@@ -1467,15 +1453,15 @@ class MovyPlugin(
         }
 
         val similarCards = d.recommendations.map { rec ->
-            val isTv = rec.type == MediaType.TV_SERIES
+            val isTvRec = rec.type == MediaType.TV_SERIES
             MediaCard(
                 id = rec.id,
                 title = rec.title,
                 posterUrl = rec.posterUrl,
                 backdropUrl = rec.backdropUrl,
-                type = if (isTv) ContentType.TV_SERIES else ContentType.MOVIE,
+                type = if (isTvRec) ContentType.TV_SERIES else ContentType.MOVIE,
                 releaseYear = rec.year,
-                target = if (isTv) {
+                target = if (isTvRec) {
                     PlayableTarget.Episode(tmdbId = rec.id.toIntOrNull() ?: 0, season = 1, episode = 1, title = rec.title)
                 } else {
                     PlayableTarget.Movie(tmdbId = rec.id.toIntOrNull() ?: 0, title = rec.title, releaseYear = rec.year)
