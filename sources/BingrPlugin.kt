@@ -95,7 +95,7 @@ class BingrPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "bingr",
         name = "Bingr",
-        version = 4,
+        version = 5,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.BingrPlugin",
@@ -1066,7 +1066,7 @@ class BingrPlugin(
         } catch (_: Throwable) { return }
 
         // 0. Parse evionUrl (Direct HLS Stream for TV Series like The Boys, Stranger Things, Game of Thrones)
-        val evionUrl = root["evionUrl"]?.jsonPrimitive?.contentOrNull
+        val evionUrl = (root["evionUrl"] as? JsonPrimitive)?.contentOrNull
         if (!evionUrl.isNullOrBlank() && evionUrl.startsWith("http") && emittedKeys.add(evionUrl)) {
             val sourceId = "bingr:vidrift:evion:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
             val headers = mapOf(
@@ -1136,11 +1136,11 @@ class BingrPlugin(
         }
 
         // 1. Parse warmStreams (Relay HLS)
-        val warmStreams = root["warmStreams"]?.jsonArray
+        val warmStreams = root["warmStreams"] as? JsonArray
         if (warmStreams != null) {
             for (wItem in warmStreams) {
                 val wObj = wItem.jsonObject
-                val proxyUrl = wObj["proxyUrl"]?.jsonPrimitive?.contentOrNull
+                val proxyUrl = (wObj["proxyUrl"] as? JsonPrimitive)?.contentOrNull
                 if (!proxyUrl.isNullOrBlank() && proxyUrl.contains("http") && emittedKeys.add(proxyUrl)) {
                     val sourceId = "bingr:vidrift:relay:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
                     val headers = mapOf(
@@ -1212,22 +1212,22 @@ class BingrPlugin(
         }
 
         // 2. Parse orionStreams (Multi-Audio & Multi-Quality Variants)
-        val orionStreams = root["orionStreams"]?.jsonArray
+        val orionStreams = root["orionStreams"] as? JsonArray
         if (orionStreams != null) {
             for (oItem in orionStreams) {
                 val oObj = oItem.jsonObject
-                val streamName = oObj["name"]?.jsonPrimitive?.contentOrNull ?: "Orion"
-                val rawUrl = oObj["url"]?.jsonPrimitive?.contentOrNull ?: continue
-                val streamType = oObj["type"]?.jsonPrimitive?.contentOrNull?.lowercase() ?: "hls"
+                val streamName = (oObj["name"] as? JsonPrimitive)?.contentOrNull ?: "Orion"
+                val rawUrl = (oObj["url"] as? JsonPrimitive)?.contentOrNull ?: continue
+                val streamType = (oObj["type"] as? JsonPrimitive)?.contentOrNull?.lowercase() ?: "hls"
                 val isMp4 = streamType == "mp4"
 
                 val streamUrl = if (rawUrl.startsWith("/")) "$vidriftBaseUrl$rawUrl" else rawUrl
                 if (!streamUrl.startsWith("http") || !emittedKeys.add(streamUrl)) continue
 
                 var rungHeight = 1080
-                val rungs = oObj["rungs"]?.jsonArray
+                val rungs = oObj["rungs"] as? JsonArray
                 if (rungs != null && rungs.isNotEmpty()) {
-                    val maxH = rungs.mapNotNull { it.jsonObject["height"]?.jsonPrimitive?.intOrNull }.maxOrNull()
+                    val maxH = rungs.mapNotNull { (it.jsonObject["height"] as? JsonPrimitive)?.intOrNull }.maxOrNull()
                     if (maxH != null && maxH > 0) rungHeight = maxH
                 }
 
@@ -1717,7 +1717,6 @@ class BingrPlugin(
                     } else {
                         "$vidriftBaseUrl/embed/movie/$tmdbId"
                     }
-
                     val req = Request.Builder()
                         .url(vidriftUrl)
                         .header("User-Agent", defaultUa)
