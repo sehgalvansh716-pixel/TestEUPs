@@ -95,7 +95,7 @@ class BingrPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "bingr",
         name = "Bingr",
-        version = 5,
+        version = 6,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.BingrPlugin",
@@ -1324,6 +1324,101 @@ class BingrPlugin(
                 )
 
                 onEmit(eupSource, coreSource)
+            }
+        }
+
+        // 3. Fallback: Query Vidrift /api/source if warmStreams and orionStreams are null/empty
+        val playbackToken = (root["playbackToken"] as? JsonPrimitive)?.contentOrNull
+        if (!playbackToken.isNullOrBlank() && (orionStreams == null || orionStreams.isEmpty()) && (warmStreams == null || warmStreams.isEmpty())) {
+            val sourcePath = if (isTv && season != null && episode != null) "tv/$tmdbId/$season/$episode" else "movie/$tmdbId"
+            val candidateProviders = listOf("castle", "vaplayer", "vidlove", "vidrock")
+            for (prov in candidateProviders) {
+                try {
+                    val encodedToken = java.net.URLEncoder.encode(playbackToken, "UTF-8")
+                    val apiUrl = "$vidriftBaseUrl/api/source/$sourcePath?token=$encodedToken&provider=$prov"
+                    val apiReq = Request.Builder()
+                        .url(apiUrl)
+                        .header("User-Agent", eupHost?.defaultUserAgent ?: defaultUserAgent)
+                        .header("Referer", "https://embed.vidrift.in/")
+                        .header("Origin", "https://embed.vidrift.in")
+                        .build()
+
+                    val apiBody = http.meta.newCall(apiReq).execute().use { resp ->
+                        if (resp.isSuccessful) resp.body?.string().orEmpty() else ""
+                    }
+
+                    if (apiBody.isNotBlank() && apiBody.startsWith("{")) {
+                        val apiRoot = json.parseToJsonElement(apiBody).jsonObject
+                        val apiStreams = apiRoot["streams"] as? JsonArray
+                        val maxRes = (apiRoot["maxRes"] as? JsonPrimitive)?.intOrNull ?: 720
+                        val qualityTag = if (maxRes >= 1080) "1080p FHD" else "${maxRes}p HD"
+                        if (apiStreams != null && apiStreams.isNotEmpty()) {
+                            for (sItem in apiStreams) {
+                                val sObj = sItem.jsonObject
+                                val sUrl = (sObj["url"] as? JsonPrimitive)?.contentOrNull ?: continue
+                                if (!sUrl.startsWith("http") || !emittedKeys.add(sUrl)) continue
+                                val sName = (sObj["name"] as? JsonPrimitive)?.contentOrNull ?: "Titan"
+                                val sType = (sObj["type"] as? JsonPrimitive)?.contentOrNull?.lowercase() ?: "hls"
+                                val isMp4 = sType == "mp4"
+
+                                val sourceId = "bingr:vidrift:api:${prov}:${sName.filter { it.isLetterOrDigit() }.lowercase()}:$tmdbId:${if (isTv) "s${season}e$episode" else "movie"}"
+                                val headers = mapOf(
+                                    "Referer" to "https://embed.vidrift.in/",
+                                    "Origin" to "https://embed.vidrift.in",
+                                    "User-Agent" to (eupHost?.defaultUserAgent ?: defaultUserAgent)
+                                )
+
+                                val audioTracks = listOf(
+                                    EupAudioTrackDescriptor(
+                                        label = sName,
+                                        language = if (sName.contains("Tamil", ignoreCase = true)) "ta" else "en",
+                                        isDefault = !sName.contains("Tamil", ignoreCase = true),
+                                        codec = if (isMp4) "aac" else "mp4a.40.2",
+                                        channelCount = 2
+                                    )
+                                )
+
+                                val coreAudio = listOf(
+                                    CoreAudioTrackDescriptor(
+                                        languageName = sName,
+                                        isoCode = if (sName.contains("Tamil", ignoreCase = true)) "ta" else "en",
+                                        channels = 2,
+                                        codec = "AAC"
+                                    )
+                                )
+
+                                val eupSource = EupStreamSource(
+                                    id = sourceId,
+                                    serverId = "vidrift_$prov",
+                                    serverLabel = "Vidrift ($sName $qualityTag)",
+                                    url = sUrl,
+                                    kind = if (isMp4) StreamKind.PROGRESSIVE else StreamKind.HLS,
+                                    headers = HeaderPolicy(sticky = headers),
+                                    video = VideoInfo(height = maxRes),
+                                    audioTracks = audioTracks,
+                                    subtitles = eupSubs,
+                                    introOffsetMs = introOffsetMs,
+                                    expiresAtEpochMs = System.currentTimeMillis() + (25 * 60_000L),
+                                    refreshHandle = "v1|api|$prov"
+                                )
+
+                                val coreSource = CoreStreamSource(
+                                    url = sUrl,
+                                    serverName = "Vidrift ($sName)",
+                                    resolutionLabel = qualityTag,
+                                    quality = "Bingr Vidrift ($sName $qualityTag)",
+                                    isM3u8 = !isMp4,
+                                    audioTracks = coreAudio,
+                                    releaseType = AudioReleaseType.ORIGINAL,
+                                    headers = headers
+                                )
+
+                                onEmit(eupSource, coreSource)
+                            }
+                            break
+                        }
+                    }
+                } catch (_: Throwable) {}
             }
         }
     }
