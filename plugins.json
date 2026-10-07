@@ -15,7 +15,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/bingr.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "d3393bcebb3ac11b8d50d31204e7e9c4317b01127058102e4c97407f09137fca",
+      "sha256": "417147957fb1a5b92d4ce67f834693a7405bbae66e3a848f1c63a24edd8adc64",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -38,7 +38,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/movy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "8c93beabf402545d11b111cd574832fe6de6ebc956a316dcb3c4945990baa7ec",
+      "sha256": "a7a3cb15bf3f6acef8cb518af6efeed55cdd52e170c437f907911ce3b4fdc668",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -61,7 +61,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/cinejoy.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "ff4648657827f3d3c275a60718e45c741736136c6cddaf68fc4728200f8d04db",
+      "sha256": "bbd38bbe0d92273369f54ad356050032be656246cff1144698476a6523e805ab",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -84,7 +84,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/1shows.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "acc68a45e7de876f5ee5e78388de182598d9f0b1b7ba5db2b90135c57a752de4",
+      "sha256": "e5273cdb702c53facad1f6fd57415a2e11661dfb96f81941b3a13e784fb20ccc",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -107,7 +107,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/4khdhub.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "1b8354b2f3a4c4d9e163cae72ad84a52579f3ca8cef67ee9e9180e019a4179de",
+      "sha256": "59ead067f2dd7c108a96433a3e08e3d971c7ebd7bedf78102d1eafc3f157c4c0",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
@@ -121,23 +121,23 @@
     {
       "id": "freekz",
       "name": "Freekz",
-      "version": 3,
-      "versionName": "1.2.0",
+      "version": 4,
+      "versionName": "1.3.0",
       "author": "Euthopiar Core",
       "siteUrl": "https://freekz.to",
-      "description": "High-speed multi-server streaming with Orion (Multi-Audio & Multi-Dub), Centaurus (Multi-Audio), Andromeda (HD), Atlas (Multi-HLS), Ursa/Meow, home carousel hero spotlights, 30+ categorized catalogs, TMDB bridging, AniSkip, and OpenSubtitles.",
+      "description": "High-speed multi-server streaming with Atlas (Multi-HLS 1080p), Orion (Multi-Audio & Multi-Dub), Centaurus (Multi-Audio), Ursa/Meow, home carousel hero spotlights, 30+ categorized catalogs, TMDB bridging, AniSkip, and OpenSubtitles.",
       "className": "com.euthopiar.core.provider.FreekzPlugin",
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/freekz.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "fbce25745a1ed295adac7af5fb2d4dc9180c92a28c9e3b0343d51fd1204215dd",
+      "sha256": "dcf3e3b700e0db1ee619624ec3aa008cecfd3bce8be4dda94222b663f48b13be",
       "isEup": true,
       "supportedTypes": [
         "MOVIE",
         "SERIES",
         "ANIME"
       ],
-      "fileSize": 66510,
+      "fileSize": 65030,
       "isAdult": false,
       "isVault": false
     },
@@ -153,7 +153,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/hqporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "439e250f6dc882d004c466fdd4a1859ece90f94cd910d03f16945751393b37cf",
+      "sha256": "da2cbbfcc778c4a767d45895a2fd661fd1f4ff4c77728855307a1a92da9d2dc8",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -174,7 +174,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/xvideos.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "5d5ba3bf58a8f8309e6e0460505860d4f581fe00a6d1075ffe85253821759d60",
+      "sha256": "db43c888fa38df5b3a8fdf5ad67629ed54c49714cb05226db8cf0dfb3b47b9ed",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -195,7 +195,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/eporner.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "39e94004a207e6ca100a18aea8ae75a23381e6288c2a68e80ba501c279d80dd2",
+      "sha256": "2ed59e310dd11b4b1fd79df356e4490910dc3962aba7c3940f12d0016f48193f",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -216,7 +216,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/rule34video.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "86cd39ddbe1e58aa8cc84cc754b3090ffc293845e17e1125934db62121dad879",
+      "sha256": "18e1bcdac81716967599e8de4c4696743cf659e1d360a065210816d0571fe46c",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -237,7 +237,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/beeg.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "175a81f6d58e11b24a3b2249877377d8dd52517d590e1ad4ec6f8a8e2a180c26",
+      "sha256": "88ba31e2fdf0c1f242e1d5ebe65dbeff64cea9c717c30526cbcba9602b70a2cf",
       "isEup": true,
       "supportedTypes": [
         "ADULT"
@@ -258,7 +258,7 @@
       "downloadUrl": "https://raw.githubusercontent.com/sehgalvansh716-pixel/TestEUPs/main/faphouse.eup",
       "isBuiltIn": false,
       "isEnabled": true,
-      "sha256": "ff94e98a9419e566de2e9dd4ae6d03cf738cd9e606e1c88f51f6bfde1005a019",
+      "sha256": "b61400914975437bd9f43d6ef7192244476e0fac0b288358c35f5cdb1b7a799e",
       "isEup": true,
       "supportedTypes": [
         "ADULT"

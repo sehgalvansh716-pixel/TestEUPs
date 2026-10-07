@@ -94,7 +94,7 @@ class FreekzPlugin(
     override val manifest: PluginManifest = PluginManifest(
         id = "freekz",
         name = "Freekz",
-        version = 3,
+        version = 4,
         apiVersion = 2,
         realm = PluginRealm.PUBLIC,
         entryClass = "com.euthopiar.core.provider.FreekzPlugin",
@@ -109,7 +109,7 @@ class FreekzPlugin(
         ),
         author = "Euthopiar Core",
         siteUrl = "https://freekz.to",
-        description = "High-speed multi-server streaming with Orion (Multi-Audio & Multi-Dub), Centaurus (Multi-Audio), Andromeda (HD), Atlas (Multi-HLS), Ursa/Meow, home carousel hero spotlights, 30+ categorized catalogs, full season/episode extraction, TMDB bridging, AniSkip, and OpenSubtitles."
+        description = "High-speed multi-server streaming with Atlas (Multi-HLS 1080p), Orion (Multi-Audio & Multi-Dub), Centaurus (Multi-Audio), Ursa/Meow, home carousel hero spotlights, 30+ categorized catalogs, full season/episode extraction, TMDB bridging, AniSkip, and OpenSubtitles."
     )
 
     private val tmdbApiKey = "3e20e76d6d210b6cb128d17d233b64dc"
@@ -152,9 +152,15 @@ class FreekzPlugin(
             Dns.SYSTEM
         }
 
+        private fun createDispatcher(): Dispatcher = Dispatcher().apply {
+            maxRequests = 64
+            maxRequestsPerHost = 30
+        }
+
         val meta: OkHttpClient = (externalClient?.newBuilder() ?: OkHttpClient.Builder())
             .dns(resolvedDns)
             .connectionPool(sharedPool)
+            .dispatcher(createDispatcher())
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(12, TimeUnit.SECONDS)
             .writeTimeout(12, TimeUnit.SECONDS)
@@ -166,6 +172,7 @@ class FreekzPlugin(
         val stream: OkHttpClient = (externalClient?.newBuilder() ?: OkHttpClient.Builder())
             .dns(resolvedDns)
             .connectionPool(sharedPool)
+            .dispatcher(createDispatcher())
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
@@ -1372,9 +1379,9 @@ class FreekzPlugin(
                         }
                     }
 
-                    // Background dub fetching without blocking primary stream playback
+                    // Background dub fetching without blocking primary stream playback (top 3 popular dubs)
                     val dubs = sData["dubs"]?.jsonArray.orEmpty()
-                    for (d in dubs.take(6)) {
+                    for (d in dubs.take(3)) {
                         val dObj = d.jsonObject
                         if (dObj["original"]?.jsonPrimitive?.booleanOrNull == true) continue
                         val lanCode = dObj["lanCode"]?.jsonPrimitive?.contentOrNull ?: continue
@@ -1450,89 +1457,11 @@ class FreekzPlugin(
                             safeLog("FreekzPlugin", "Centaurus decrypt error: ${e.message}", e)
                         }
                     }
-
-                    // Background dub fetching
-                    val dubs = sData["dubs"]?.jsonArray.orEmpty()
-                    for (d in dubs.take(6)) {
-                        val dObj = d.jsonObject
-                        if (dObj["original"]?.jsonPrimitive?.booleanOrNull == true) continue
-                        val lanCode = dObj["lanCode"]?.jsonPrimitive?.contentOrNull ?: continue
-                        val lanName = dObj["lanName"]?.jsonPrimitive?.contentOrNull ?: lanCode.uppercase()
-                        val dubType = dObj["type"]?.jsonPrimitive?.contentOrNull ?: "0"
-
-                        launch {
-                            try {
-                                val dubData = fetchServerData("centaurus", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders, dubCode = lanCode, dubType = dubType)
-                                val dubLinks = dubData?.get("links")?.jsonArray.orEmpty()
-                                for (dl in dubLinks) {
-                                    val encDubLink = dl.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                                    val decDubUrl = CryptoJsAes.decrypt(encDubLink, cryptoPassphrase)
-                                    val fullDubUrl = if (decDubUrl.startsWith("http")) decDubUrl else "$vidstuckBaseUrl$decDubUrl"
-                                    val taggedDubUrl = if (fullDubUrl.contains("#")) fullDubUrl else "$fullDubUrl#dash.mpd"
-
-                                    emitResolvedSource(
-                                        sourceId = "freekz_cent_dub_${lanCode}_${fullDubUrl.hashCode().toString(16)}",
-                                        serverName = "Freekz - Centaurus [$lanName Dub]",
-                                        url = taggedDubUrl,
-                                        quality = "1080p",
-                                        isHls = false,
-                                        audioTracks = listOf(CoreAudioTrackDescriptor(lanName, lanCode, 2, "aac")),
-                                        v2AudioTracks = listOf(EupAudioTrackDescriptor(lanName, lanCode, false, "aac", 2)),
-                                        streamHeaders = streamHeaders,
-                                        introOffsetMs = introOffsetMs,
-                                        subtitles = collectedV2Subs,
-                                        onStreamFound = onStreamFound,
-                                        onV2StreamFound = onV2StreamFound
-                                    )
-                                }
-                            } catch (_: Throwable) {}
-                        }
-                    }
                 }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (t: Throwable) {
                 safeLog("FreekzPlugin", "Centaurus error: ${t.message}", t)
-            }
-        }
-
-        // 5. Andromeda (HD 1080p Smooth Playback)
-        launch {
-            try {
-                onStatus("Andromeda", "Connecting to Andromeda HD cluster...")
-                val sData = fetchServerData("andromeda", tmdbId, mediaType, isTv, season, episode, effectiveTitle, effectiveYear, effectiveDate, effectiveImdb, streamHeaders)
-                if (sData != null) {
-                    val links = sData["links"]?.jsonArray.orEmpty()
-                    for (l in links) {
-                        val encLink = l.jsonObject["link"]?.jsonPrimitive?.contentOrNull ?: continue
-                        try {
-                            val decUrl = CryptoJsAes.decrypt(encLink, cryptoPassphrase)
-                            val fullUrl = if (decUrl.startsWith("http")) decUrl else "$vidstuckBaseUrl$decUrl"
-                            val taggedUrl = if (fullUrl.contains("#")) fullUrl else "$fullUrl#dash.mpd"
-
-                            emitResolvedSource(
-                                sourceId = "freekz_andro_${fullUrl.hashCode().toString(16)}",
-                                serverName = "Freekz - Andromeda [HD 1080p]",
-                                url = taggedUrl,
-                                quality = "1080p",
-                                isHls = false,
-                                audioTracks = listOf(CoreAudioTrackDescriptor("English", "en", 2, "aac")),
-                                v2AudioTracks = listOf(EupAudioTrackDescriptor("English", "en", true, "aac", 2)),
-                                streamHeaders = streamHeaders,
-                                introOffsetMs = introOffsetMs,
-                                subtitles = collectedV2Subs,
-                                onStreamFound = onStreamFound,
-                                onV2StreamFound = onV2StreamFound
-                            )
-                        } catch (e: Throwable) {
-                            safeLog("FreekzPlugin", "Andromeda decrypt error: ${e.message}", e)
-                        }
-                    }
-                }
-            } catch (ce: CancellationException) {
-                throw ce
-            } catch (t: Throwable) {
-                safeLog("FreekzPlugin", "Andromeda error: ${t.message}", t)
             }
         }
     }
